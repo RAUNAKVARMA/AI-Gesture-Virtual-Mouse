@@ -1,0 +1,56 @@
+{
+  "camera": {
+    "index": 0,
+    "width": 960,
+    "height": 540,
+    "max_search_index": 4
+  },
+  "hand_tracking": {
+    "max_num_hands": 2,
+    "min_detection_confidence": 0.5,
+    "min_tracking_confidence": 0.5
+  },
+  "control_zone": {
+    "x_min": 0.2,
+    "y_min": 0.2,
+    "x_max": 0.8,
+    "y_max": 0.8
+  },
+  "cursor": {
+    "sensitivity": 1.0,
+    "smoothing_factor": 0.5,
+    "enabled": true
+  },
+  "gestures": {
+    "model_path": "ml/models/gesture_classifier.pkl",
+    "demo_mode": false,
+    "use_classifier": true,
+    "cursor_hand": "auto"
+  },
+  "calibration": {
+    "enabled": true,
+    "samples_per_gesture": 50,
+    "thresholds": {
+      "open_palm": {},
+      "pinch": {},
+      "two_fingers": {},
+      "closed_fist": {}
+    }
+  },
+  "logging": {
+    "level": "INFO",
+    "log_to_file": false,
+    "filename": "gesture_virtual_mouse.log"
+  },
+  "ui": {
+    "show_fps": true,
+    "show_landmarks": true,
+    "show_control_zone": true,
+    "show_gesture_label": true
+  },
+  "deployment": {
+    "streamlit_cloud": false,
+    "note": "Set streamlit_cloud to true OR set env AI_GVM_STREAMLIT_CLOUD=1 for Streamlit Community Cloud (browser camera)."
+  }
+}
+
