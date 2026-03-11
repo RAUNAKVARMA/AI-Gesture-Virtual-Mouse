@@ -68,6 +68,48 @@ High‑level pipeline:
 6. **Cursor Controller (PyAutoGUI)**
 7. **UI Layer (OpenCV overlay + Streamlit dashboard)**
 
+```text
+          +-------------------+
+          |   Webcam (CV2)    |
+          +---------+---------+
+                    |
+                    v
+      +-----------------------------+
+      |  HandTracker (MediaPipe)   |
+      |  - 21x3 landmarks / hand   |
+      +--------------+-------------+
+                     |
+                     v
+      +-----------------------------+
+      |  FeatureExtractor           |
+      |  - distances, angles, etc.  |
+      +--------------+-------------+
+                     |
+                     v
+      +-----------------------------+
+      |  GestureEngine              |
+      |  - rules + ML classifier    |
+      |  - multi-hand semantics     |
+      +--------------+-------------+
+                     |
+                     v
+      +-----------------------------+
+      |  MouseController (PyAutoGUI)|
+      |  - smoothing, control zone  |
+      +--------------+-------------+
+                     |
+                     v
+      +-----------------------------+
+      |      OS Cursor / Scroll     |
+      +-----------------------------+
+
+         ^                       |
+         |                       v
+  +---------------+      +---------------+
+  |  Config JSON  |      | Streamlit UI  |
+  +---------------+      +---------------+
+```
+
 ---
 
 ### Project Structure
@@ -118,7 +160,7 @@ AI-Gesture-Virtual-Mouse/
 #### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Viral-Doshi/Gesture-Controlled-Virtual-Mouse.git AI-Gesture-Virtual-Mouse
+git clone https://github.com/RAUNAKVARMA/AI-Gesture-Virtual-Mouse.git
 cd AI-Gesture-Virtual-Mouse
 ```
 
