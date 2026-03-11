@@ -1,263 +1,310 @@
+### AI Gesture Virtual Mouse
 
+**AI Gesture Virtual Mouse** is a research‑grade computer vision system that turns your webcam into a virtual mouse.  
+The mouse cursor is controlled using **hand gestures** detected by **MediaPipe Hands**, with stable landmark tracking, rule‑based logic, and an optional **ML classifier** for gesture recognition.  
+The project is fully modular, production‑oriented, and ships with a **Streamlit dashboard** for interactive control and calibration.
 
-# Gesture Controlled Virtual Mouse &nbsp;[![](https://img.shields.io/badge/python-3.8.5-blue.svg)](https://www.python.org/downloads/) [![platform](https://img.shields.io/badge/platform-windows-green.svg)](https://github.com/xenon-19/Gesture_Controller) 
+---
 
-Gesture Controlled Virtual Mouse makes human computer interaction simple by making use of Hand Gestures and Voice Commands. The computer requires almost no direct contact. All i/o operations can be virtually controlled by using static and dynamic hand gestures along with a voice assistant. This project makes use of the state-of-art Machine Learning and Computer Vision algorithms to recognize hand gestures and voice commands, which works smoothly without any additional hardware requirements. It leverages models such as CNN implemented by [MediaPipe](https://github.com/google/mediapipe) running on top of pybind11. It consists of two modules: One which works direct on hands by making use of MediaPipe Hand detection, and other which makes use of Gloves of any uniform color. Currently it works on Windows platform.
+### Features
 
- _Video Demonstration: [link](https://www.youtube.com/watch?v=ufm6tfgo-OA&ab_channel=Proton)_<br>
-Note: Use Python version: 3.8.5
+- **Hand‑tracking with MediaPipe**
+  - 21 landmarks per hand
+  - Multi‑hand support (right + left)
+  - Normalized coordinates and FPS overlay
 
-# Features
- _click on dropdown to know more_ <br>
+- **Gesture‑driven mouse control**
+  - **Index finger up** → move cursor
+  - **Thumb + index pinch** → left click
+  - **Two fingers up** → scroll
+  - **Three fingers up** → right click
+  - **Closed fist** → pause tracking
+  - **Open palm** → resume tracking
 
-### Gesture Recognition:
-<details>
-<summary>Neutral Gesture</summary>
- <figure>
-  <img src="https://github.com/xenon-19/Gesture_Controller/blob/9be82cfc75aa4c04fff0e12dd4de853f9d83a101/demo_media/palm.gif" alt="Palm" width="711" height="400"><br>
-  <figcaption>Neutral Gesture. Used to halt/stop execution of current gesture.</figcaption>
-</figure>
-</details>
- 
+- **Cursor control & smoothing**
+  - PyAutoGUI‑based cursor, click, and scroll
+  - Adjustable sensitivity and smoothing
+  - Virtual **control zone** mapped from camera space to screen space
 
-<details>
-<summary>Move Cursor</summary>
-  <img src="https://github.com/xenon-19/Gesture_Controller/blob/e20edfb1f368ffa600d96bd91031942ec97cb2ab/demo_media/move%20mouse.gif" alt="Move Cursor" width="711" height="400"><br>
-  <figcaption>Cursor is assigned to the midpoint of index and middle fingertips. This gesture moves the cursor to the desired location. Speed of the cursor movement is proportional to the speed of hand.</figcaption>
-</details>
+- **Calibration & configuration**
+  - Interactive calibration for:
+    - open palm
+    - pinch
+    - two fingers
+    - closed fist
+  - Thresholds stored in `config/config.json`
+  - JSON‑driven configuration (camera, tracking, gestures, UI)
 
-<details>
-<summary>Left Click</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/9be82cfc75aa4c04fff0e12dd4de853f9d83a101/demo_media/left%20click.gif" alt="Left Click" width="711" height="400"><br>
- <figcaption>Gesture for single left click</figcaption>
-</details>
+- **ML gesture classifier (Scikit‑learn)**
+  - Dataset builder to record gesture samples
+  - RandomForest‑based classifier (`ml/train_model.py`)
+  - Loaded at runtime when available; falls back to robust rules
 
-<details>
-<summary>Right Click</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/9be82cfc75aa4c04fff0e12dd4de853f9d83a101/demo_media/right%20click.gif" alt="Right Click" width="711" height="400"><br>
- <figcaption>Gesture for single right click</figcaption>
-</details>
+- **Streamlit dashboard**
+  - Webcam preview
+  - Start / Stop gesture control
+  - Sensitivity & smoothing sliders
+  - Calibration button
+  - Gesture and FPS display
+  - Demo mode (logs actions instead of moving the real cursor)
 
-<details>
-<summary>Double Click</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/9be82cfc75aa4c04fff0e12dd4de853f9d83a101/demo_media/double%20click.gif" alt="Double Click" width="711" height="400"><br>
- <figcaption>Gesture for double click</figcaption>
-</details>
+- **Production‑style engineering**
+  - Modular architecture
+  - Logging and error handling
+  - Automatic camera detection
+  - Clean separation between tracking, recognition, and control
 
-<details>
-<summary>Scrolling</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/9be82cfc75aa4c04fff0e12dd4de853f9d83a101/demo_media/Scrolling.gif" alt="Scrolling" width="711" height="400"><br>
- <figcaption>Dynamic Gestures for horizontal and vertical scroll. The speed of scroll is proportional to the distance moved by pinch gesture from start point. Vertical and Horizontal scrolls are controlled by vertical and horizontal pinch movements respectively.</figcaption>
-</details>
+---
 
-<details>
-<summary>Drag and Drop</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/9be82cfc75aa4c04fff0e12dd4de853f9d83a101/demo_media/drag%20and%20drop.gif" alt="Drag and Drop" width="711" height="400"><br>
- <figcaption>Gesture for drag and drop functionality. Can be used to move/tranfer files from one directory to other.</figcaption>
-</details>
+### System Architecture
 
-<details>
-<summary>Multiple Item Selection</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/9be82cfc75aa4c04fff0e12dd4de853f9d83a101/demo_media/multiple%20item%20selection.gif" alt="Multiple Item Selection" width="711" height="400"><br>
- <figcaption>Gesture to select multiple items</figcaption>
-</details>
+High‑level pipeline:
 
-<details>
-<summary>Volume Control</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/9be82cfc75aa4c04fff0e12dd4de853f9d83a101/demo_media/Volume%20control.gif" alt="Volume Control" width="711" height="400"><br>
- <figcaption>Dynamic Gestures for Volume control. The rate of increase/decrease of volume is proportional to the distance moved by pinch gesture from start point. </figcaption>
-</details>
+1. **Webcam (OpenCV)**
+2. **Hand Tracking (MediaPipe Hands)**
+3. **Landmark Feature Extraction**
+4. **Gesture Recognition (rules + optional ML classifier)**
+5. **Gesture Logic / State Machine**
+6. **Cursor Controller (PyAutoGUI)**
+7. **UI Layer (OpenCV overlay + Streamlit dashboard)**
 
-<details>
-<summary>Brightness Control</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/9be82cfc75aa4c04fff0e12dd4de853f9d83a101/demo_media/Brigntness%20Control.gif" alt="Brightness Control" width="711" height="400"><br>
- <figcaption>Dynamic Gestures for Brightness control. The rate of increase/decrease of brightness is proportional to the distance moved by pinch gesture from start point. </figcaption>
-</details>
+---
 
-### Voice Assistant ( ***Proton*** ):
-<details>
-<summary>Launch / Stop  Gesture Recognition</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/4041eedc2f75fa2923902000b606a05a677629e8/demo_media/voice%20commands/proton%20launch%20stop%20gest.png" alt="launch stop gesture recognition" width="250" height="auto">
-<ul>
-  <li>
-    <code> Proton Launch Gesture Recognition </code><br>
-    Turns on webcam for hand gesture recognition.
-  </li>
-  <li>
-    <code> Proton Stop Gesture Recognition </code><br>
-    Turns off webcam and stops gesture recognition.
-    (Termination of Gesture controller can also be done via pressing <code>Enter</code> key in webcam window)
-   </li>
-</ul>
-</details>
+### Project Structure
 
-<details>
-<summary>Google Search</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/4041eedc2f75fa2923902000b606a05a677629e8/demo_media/voice%20commands/proton%20search.png" alt="proton search github" width="800" height="auto">
-<ul>
-  <li>
-    <code>Proton search {text_you_wish_to_search}</code><br>
-    Opens a new tab on Chrome Browser if it is running, else opens a new window. Searches the given text on Google.
-  </li>
-</ul>
-</details>
+```text
+AI-Gesture-Virtual-Mouse/
+  src/
+    hand_tracking/
+      hand_tracker.py        # MediaPipe wrapper, FPS, overlays, multi-hand
+      landmark_extractor.py  # Normalization & stacking utilities
 
-<details>
-<summary>Find a Location on Google Maps</summary>
- <img src="https://github.com/xenon-19/Gesture_Controller/blob/4041eedc2f75fa2923902000b606a05a677629e8/demo_media/voice%20commands/proton%20find%20location.png" alt="proton find location" width="800" height="auto">
-  <ol>
-    <li> 
-      <code>Proton Find a Location</code><br>
-      Will ask the user for the location to be searched.
-    </li>
-    <li> 
-      <code>{Location_you_wish_to_find}</code><br>
-      Will find the required location on Google Maps in a new Chrome tab.
-    </li>
-  </ol>
-</details>
+    gesture_recognition/
+      feature_extractor.py   # Landmark → feature vector
+      gesture_classifier.py  # Scikit-learn wrapper + heuristics
+      gesture_logic.py       # Rule-based gestures + multi-hand semantics
 
-<details>
-<summary>File Navigation</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/4041eedc2f75fa2923902000b606a05a677629e8/demo_media/voice%20commands/proton%20list%20files.png" alt="proton list files" width="250" height="auto">&emsp;
- <img src="https://github.com/xenon-19/Gesture_Controller/blob/4041eedc2f75fa2923902000b606a05a677629e8/demo_media/voice%20commands/proton%20open.png" alt="proton open" width="250" height="auto">&emsp;
- <img src="https://github.com/xenon-19/Gesture_Controller/blob/4041eedc2f75fa2923902000b606a05a677629e8/demo_media/voice%20commands/proton%20go%20back.png" alt="proton go back" width="250" height="auto">
-  <ul>
-    <li>
-      <code>Proton list files</code> / <code> Proton list </code><br>
-      Will list the files and respective file_numbers in your Current Directory (by default C:)
-    </li>
-    <li>  
-      <code> Proton open {file_number} </code><br>
-      Opens the file / directory corresponding to specified file_number.
-    </li>
-    <li>
-      <code>Proton go back </code> / <code> Proton back </code><br>
-      Changes the Current Directory to Parent Directory and lists the files.
-    </li>
-  </ul>
-</details>
+    cursor_control/
+      mouse_controller.py    # PyAutoGUI integration, clicks, scroll
+      smoothing.py           # Moving-average cursor smoothing
+      control_zone.py        # Virtual control zone mapping
 
-<details>
-<summary>Current Date and Time</summary>
-<img src="https://github.com/xenon-19/Gesture_Controller/blob/d49c868acc41ac6c89489bfd80e5e5015a8cb571/demo_media/voice%20commands/proton%20date%20time.png" alt="proton date / time" width="250" height="auto">
-  <ul>
-    <li>
-      <code> Proton what is today's date </code> / <code> Proton date </code><br>
-      <code> Proton what is the time </code> / <code> Proton time </code><br>
-      Returns the current date and time.
-    </li>
-  </ul>
-</details>
+    calibration/
+      calibrator.py          # Interactive calibration, writes config thresholds
 
-<details>
-<summary>Copy and Paste</summary>
- <img src="https://github.com/xenon-19/Gesture_Controller/blob/4041eedc2f75fa2923902000b606a05a677629e8/demo_media/voice%20commands/proton%20copy.png" alt="proton copy" width="500" height="auto">
- <img src="https://github.com/xenon-19/Gesture_Controller/blob/4041eedc2f75fa2923902000b606a05a677629e8/demo_media/voice%20commands/proton%20paste.png" alt="proton paste" width="500" height="auto">
-  <ul>
-    <li>
-      <code> Proton Copy </code><br>
-      Copies the selected text to clipboard.<br>
-    </li>
-    <li>
-      <code> Proton Paste </code><br>
-      Pastes the copied text.
-    </li>
-  </ul>
-</details>
+    ml/
+      dataset_builder.py     # Collect labeled gesture samples from webcam
+      train_model.py         # Train RandomForest gesture classifier
 
-<details>
-<summary>Sleep / Wake up Proton</summary>
-  <img src="https://github.com/xenon-19/Gesture_Controller/blob/4041eedc2f75fa2923902000b606a05a677629e8/demo_media/voice%20commands/proton%20bye%20wake%20up.png" alt="proton sleep / wake up" width="250" height="auto">
-  <ul>
-    <li>
-      Sleep<br>
-      <code> Proton bye </code><br>
-      Pauses voice command execution till the assistant is woken up.
-    </li>
-    <li>
-      Wake up<br>
-      <code> Proton wake up </code><br>
-      Resumes voice command execution.
-    </li>
-  </ul>
-</details>
+    main.py                  # CLI entrypoint for the virtual mouse
 
-<details>
-<summary>Exit</summary>
-   <img src="https://github.com/xenon-19/Gesture_Controller/blob/4041eedc2f75fa2923902000b606a05a677629e8/demo_media/voice%20commands/proton%20exit.png" alt="proton exit" width="250" height="auto">
-  <ul>
-    <li>
-      <code> Proton Exit </code> <br>
-      Terminates the voice assisstant thread. GUI window needs to be closed manually.
-    </li>
-  </ul>
-</details>
+  ui/
+    dashboard.py             # Streamlit dashboard (preview, control, calibration)
 
-# Getting Started
+  config/
+    config.json              # Camera, tracking, gesture, UI, logging config
 
-  ### Pre-requisites
-  
-  Python: (3.6 - 3.8.5)<br>
-  Anaconda Distribution: To download click [here](https://www.anaconda.com/products/individual).
-  
-  ### Procedure
+  assets/                    # (Optional) screenshots, diagrams, demo media
+
+  requirements.txt
+  README.md
+  .gitignore
+```
+
+---
+
+### Installation
+
+#### 1. Clone the repository
+
+```bash
+git clone https://github.com/Viral-Doshi/Gesture-Controlled-Virtual-Mouse.git AI-Gesture-Virtual-Mouse
+cd AI-Gesture-Virtual-Mouse
+```
+
+#### 2. Create and activate a virtual environment (recommended)
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate  # Windows
+# source .venv/bin/activate  # Linux / macOS
+```
+
+#### 3. Install dependencies
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Required packages:
+
+- `opencv-python`
+- `mediapipe`
+- `numpy`
+- `pyautogui`
+- `streamlit`
+- `scikit-learn`
+
+> **Note:** On some systems, `pyautogui` may require additional OS‑specific dependencies (e.g. accessibility permissions).
+
+---
+
+### Running the Core System (CLI)
+
+From the project root:
+
+```bash
+python src/main.py
+```
+
+This will:
+
+- auto‑detect a working camera if `camera.index` is set to `-1`
+- open the OpenCV preview window
+- show FPS, hand landmarks, and the control zone box
+- respond to gestures:
+  - **Index finger up** → move cursor within the green control zone
+  - **Pinch (thumb + index)** → left click
+  - **Two fingers** → scroll
+  - **Three fingers** → right click
+  - **Closed fist** → pause
+  - **Open palm** → resume
+
+Press `q` or `Esc` in the OpenCV window to exit.
+
+---
+
+### Running the Streamlit Dashboard
+
+From the project root:
+
+```bash
+streamlit run ui/dashboard.py
+```
+
+Dashboard features:
+
+- **Webcam preview**: live video with landmarks, control zone, and FPS.
+- **Start / Stop gesture control**: run the recognition loop in a background thread.
+- **Sensitivity slider**: adjust cursor movement sensitivity.
+- **Smoothing slider**: control the EMA / moving-average smoothing factor.
+- **Calibration button**: launches an OpenCV‑based calibration session.
+- **Gesture display**: live label of the current interpreted gesture.
+- **FPS counter**: real‑time performance indicator.
+
+> Settings are persisted to `config/config.json`. After changing sliders or demo mode, stop and restart the loop (or reload the dashboard) to apply.
+
+---
+
+### Calibration Workflow
+
+Calibration refines gesture thresholds using your own hand:
+
+1. Ensure gesture control is **stopped** in the Streamlit dashboard.
+2. Click **“Run calibration”**.
+3. An OpenCV window will appear and step through:
+   - `open_palm`
+   - `pinch`
+   - `two_fingers`
+   - `closed_fist`
+4. For each gesture:
+   - Perform and hold the gesture in front of the camera.
+   - Wait until the sample counter reaches the configured number (default 50).
+   - Press `Esc` at any time to abort that gesture.
+5. On completion:
+   - Calibration statistics are written to `config/config.json` under `calibration.thresholds`.
+   - The gesture engine will start using these thresholds (pinch distance, palm spread, fist tightness) on the next run.
+
+You can also run calibration directly from the CLI, if desired, by creating a small script that instantiates `Calibrator` and calls `run()`.
+
+---
+
+### Gesture Classifier (ML)
+
+The project includes a **Scikit‑learn** pipeline for data‑driven gesture classification:
+
+- **Dataset collection**
+
+  Use `DatasetBuilder` to record feature vectors for your custom gestures:
+
   ```bash
-  git clone https://github.com/xenon-19/Gesture-Controlled-Virtual-Mouse.git
+  # pseudocode example
+  python -m src.ml.dataset_builder  # or write a small wrapper
   ```
-  For detailed information about cloning visit [here](https://docs.github.com/en/github/creating-cloning-and-archiving-repositories/cloning-a-repository-from-github/cloning-a-repository).
-  
-  Step 1: 
-  ```bash
-  conda create --name gest python=3.8.5
-  ```
-  
-  Step 2:
-  ```bash
-  conda activate gest
-  ```
-  
-  Step 3:
-  ```bash
-  pip install -r requirements.txt
-  ```
-  
-  Step 4:
-  ```bash 
-  conda install PyAudio
-  ```
-  ```bash 
-  conda install pywin32
-  ```
-  
-  Step 5:
-  ``` 
-  cd to the GitHub Repo till src folder
-  ```
-  Command may look like: `cd C:\Users\.....\Gesture-Controlled-Virtual-Mouse\src`
-  
-  Step 6:
-  
-  For running Voice Assistant:
-  ```bash 
-  python Proton.py
-  ```
-  ( You can enable Gesture Recognition by using the command "Proton Launch Gesture Recognition" )
-  
-  Or to run only Gesture Recognition without the voice assisstant:
-  
-  Uncomment last 2 lines of Code in the file `Gesture_Controller.py`
-  ```bash 
-  python Gesture_Controller.py
-  ```
-  
 
-  
-# Collaborators
-  | |  |  |  |  |
-  | ------------- | ------------- | ------------- | ------------- | ------------- |
-  | Viral Doshi | [GitHub](https://github.com/Viral-Doshi) | Email | [LinkedIn](https://www.linkedin.com/in/viral-doshi-5a7737190/) | Instagram |
-  | Nishiket Bidawat | [Github](https://github.com/xenon-19) | [Email](mailto:bidawatnishiket@gmail.com) | [LinkedIn](https://www.linkedin.com/in/nishiket-bidawat-74b419193/) | [Instagram](https://myanimelist.net/profile/Xenon1901) |
-  | Ankit Sharma | [GitHub](https://github.com/ankit-4129) | [Email](mailto:ankitsharma.rbt@gmail.com) | LinkedIn | Instagram |
-  | Parth Sakariya | [Github](https://github.com/parth-12) | [Email](mailto:parthsakariya12@icloud.com) | [LinkedIn](https://www.linkedin.com/in/parth-sakariya-1886b2193/) | [Instagram](https://www.instagram.com/parth_sak12/) |
-  
+  Each recorded row contains: `label, f1, f2, ..., fN`.
+
+- **Model training**
+
+  ```bash
+  python src/ml/train_model.py --csv path/to/dataset.csv --output ml/models/gesture_classifier.pkl
+  ```
+
+  The trained RandomForest model is then loaded at runtime by `GestureClassifier`.
+
+- **Runtime behavior**
+
+  - If the model file exists and `gestures.use_classifier` is `true`, the classifier’s prediction is used.
+  - If not, the system falls back to robust rule‑based logic and calibration thresholds.
+
+---
+
+### Configuration
+
+All runtime configuration lives in `config/config.json`, for example:
+
+- **camera**
+  - `index`, `width`, `height`, `max_search_index`
+- **hand_tracking**
+  - MediaPipe parameters (max hands, detection/tracking confidence)
+- **control_zone**
+  - normalized coordinates of the active region in camera space
+- **cursor**
+  - `sensitivity`, `smoothing_factor`, `enabled`
+- **gestures**
+  - `model_path`, `demo_mode`, `use_classifier`
+- **calibration**
+  - `samples_per_gesture`, `thresholds` (populated by calibration)
+- **logging**
+  - log level, file logging options
+- **ui**
+  - toggles for FPS, landmarks, control zone, gesture label
+
+Adjust these values to tune behavior without touching code.
+
+---
+
+### Future Improvements
+
+- **Robust ML pipeline**
+  - Better dataset tooling and augmentation
+  - Support for per‑user profiles and online adaptation
+
+- **Advanced gesture set**
+  - Drag‑and‑drop, window management, multi‑finger shortcuts
+  - Context‑aware gestures for different applications
+
+- **Cross‑platform enhancements**
+  - Improved macOS / Linux integration and permission helpers
+
+- **Performance optimizations**
+  - Async capture and inference
+  - GPU‑accelerated pipelines and model serving
+
+- **Testing & CI**
+  - Unit tests for core modules
+  - Continuous integration workflow for linting and checks
+
+---
+
+### Demo Section (Placeholder)
+
+A curated **Demo** section can be added here with:
+
+- GIFs or short videos of gesture control in action
+- Screenshots of the Streamlit dashboard and calibration flow
+- Links to blog posts or talks describing the system
+
+Place media files under `assets/` and reference them from this section.
+
