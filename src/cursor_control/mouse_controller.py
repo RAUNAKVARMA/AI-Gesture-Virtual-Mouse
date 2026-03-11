@@ -1,7 +1,13 @@
 import logging
 from typing import Tuple
 
-import pyautogui
+# Safe import for pyautogui (works locally, disabled on cloud)
+try:
+    import pyautogui
+    MOUSE_AVAILABLE = True
+except Exception:
+    pyautogui = None
+    MOUSE_AVAILABLE = False
 
 from .smoothing import PositionSmoother
 from .control_zone import ControlZone
@@ -13,6 +19,8 @@ logger = logging.getLogger(__name__)
 class MouseController:
     """
     High-level cursor control using pyautogui.
+    Automatically disables mouse control when running in environments
+    without a GUI (e.g., Streamlit Cloud).
     """
 
     def __init__(
@@ -23,13 +31,19 @@ class MouseController:
         enabled: bool = True,
         demo_mode: bool = False,
     ) -> None:
+
         self.control_zone = control_zone
         self.sensitivity = sensitivity
-        self.enabled = enabled
-        self.demo_mode = demo_mode
+        self.enabled = enabled and MOUSE_AVAILABLE
+        self.demo_mode = demo_mode or not MOUSE_AVAILABLE
 
-        pyautogui.FAILSAFE = False
-        screen_width, screen_height = pyautogui.size()
+        if MOUSE_AVAILABLE:
+            pyautogui.FAILSAFE = False
+            screen_width, screen_height = pyautogui.size()
+        else:
+            # fallback values for cloud environments
+            screen_width, screen_height = 1920, 1080
+
         self.screen_size: Tuple[int, int] = (screen_width, screen_height)
         self.smoother = PositionSmoother(window_size=5, alpha=smoothing_factor)
 
@@ -43,16 +57,28 @@ class MouseController:
             self.demo_mode,
         )
 
+        if not MOUSE_AVAILABLE:
+            logger.warning("Mouse control disabled (no display environment detected).")
+
+
     def _apply_sensitivity(self, x: float, y: float) -> Tuple[float, float]:
+
+        if not MOUSE_AVAILABLE:
+            return x, y
+
         cx, cy = pyautogui.position()
+
         dx = (x - cx) * self.sensitivity
         dy = (y - cy) * self.sensitivity
+
         return cx + dx, cy + dy
+
 
     def move_from_normalized(self, x_norm: float, y_norm: float) -> None:
         """
         Move cursor from a normalized camera coordinate in [0,1]x[0,1].
         """
+
         if not self.enabled:
             return
 
@@ -61,7 +87,9 @@ class MouseController:
             y_norm,
             *self.screen_size,
         )
+
         x, y = self._apply_sensitivity(x, y)
+
         x, y = self.smoother.update(x, y)
 
         if self.demo_mode:
@@ -70,30 +98,42 @@ class MouseController:
 
         pyautogui.moveTo(x, y, duration=0.0)
 
+
     def left_click(self) -> None:
+
         if not self.enabled:
             return
+
         if self.demo_mode:
             logger.info("Demo left click")
             return
+
         pyautogui.click(button="left")
 
+
     def right_click(self) -> None:
+
         if not self.enabled:
             return
+
         if self.demo_mode:
             logger.info("Demo right click")
             return
+
         pyautogui.click(button="right")
+
 
     def scroll(self, dy: int) -> None:
         """
         Scroll vertically by dy units (positive=up, negative=down).
         """
+
         if not self.enabled:
             return
+
         if self.demo_mode:
             logger.info("Demo scroll dy=%d", dy)
             return
-        pyautogui.scroll(dy)
+
+        pyautogui.scroll(dy))
 
