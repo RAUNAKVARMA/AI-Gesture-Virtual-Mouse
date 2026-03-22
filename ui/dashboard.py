@@ -20,8 +20,6 @@ import numpy as np
 import streamlit as st
 from PIL import Image
 
-import sys
-
 ROOT_DIR = _ROOT
 SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
@@ -76,6 +74,30 @@ def ensure_hosted_tracker_engine(cfg: dict) -> tuple[HandTracker, GestureEngine]
     return st.session_state[key]
 
 
+def _hosted_run_detection(
+    frame_rgb: np.ndarray,
+    mirror_horizontal: bool,
+    tracker: HandTracker,
+    engine: GestureEngine,
+    image_placeholder,
+    gesture_placeholder,
+    status_placeholder,
+) -> None:
+    if mirror_horizontal:
+        frame_rgb = np.ascontiguousarray(frame_rgb[:, ::-1, :])
+    else:
+        frame_rgb = np.ascontiguousarray(frame_rgb)
+
+    frame_out, hands = tracker.process_rgb(frame_rgb)
+    command = engine.process(hands)
+
+    if command:
+        gesture_placeholder.markdown(f"**Gesture:** `{command.value}`")
+
+    image_placeholder.image(frame_out, channels="RGB", use_container_width=True)
+    status_placeholder.markdown(f"**Hands detected:** `{len(hands)}`")
+
+
 def render_cloud_browser_camera_ui(
     cfg: dict,
     status_placeholder,
@@ -88,43 +110,86 @@ def render_cloud_browser_camera_ui(
         "clone the repo and run locally (`python src/main.py` or Streamlit without cloud mode) "
         "for real cursor control."
     )
-    with st.expander("Camera blocked or “Take Photo” grayed out? Allow access here"):
+    st.error(
+        "**No “magic button” for camera:** browsers never let a website turn the camera on without **your** permission. "
+        "**If this tab is inside Cursor, VS Code, or a small embedded preview, the camera is usually blocked forever** — "
+        "copy your Streamlit URL and open it in **Chrome** or **Edge** (full window)."
+    )
+    with st.expander("Webcam: allow access in the browser (click lock icon → Camera → Allow)"):
         st.markdown(
             """
-1. **Browser:** Click the **lock** or **site settings** icon in the address bar → find **Camera** → choose **Allow** (not “Block”).
-2. **Reload** the page after changing permission.
-3. **Close other apps** using the webcam (Zoom, Teams, Skype, another browser tab with camera).
-4. **Windows:** Settings → Privacy & security → **Camera** → turn **on** “Let desktop apps access your camera” and allow your browser.
-5. **HTTPS:** Streamlit Cloud uses HTTPS; if you ever run locally over plain `http://`, some browsers block camera — use `localhost` or HTTPS.
+1. **Address bar** → **lock** or **tune** icon → **Site settings** → **Camera** → **Allow** → reload the page.
+2. Close Zoom / Teams / other apps using the webcam.
+3. **Windows:** Settings → Privacy → **Camera** → allow desktop apps and your browser.
 
-After permission is granted, the camera preview should appear and frames will process automatically.
+**Or skip the webcam** and use the **Upload image** tab — no permission needed.
             """
         )
+
     tracker, engine = ensure_hosted_tracker_engine(cfg)
-    img_file = st.camera_input(
-        "Camera preview (grant permission when the browser asks)",
-        key="gvm_browser_camera",
+
+    input_mode = st.radio(
+        "Choose input",
+        ["Webcam", "Upload image (no camera permission needed)"],
+        horizontal=True,
+        key="gvm_cloud_input_mode",
     )
-    if img_file is None:
-        status_placeholder.markdown("**Status:** waiting for camera permission / first frame…")
+
+    if input_mode.startswith("Webcam"):
+        img_file = st.camera_input(
+            "Allow the browser’s camera prompt, then capture",
+            key="gvm_browser_camera",
+        )
+        if img_file is None:
+            status_placeholder.markdown(
+                "**Status:** waiting for camera — or select **Upload image** above (always works)."
+            )
+            return
+
+        try:
+            img = Image.open(BytesIO(img_file.getvalue()))
+            frame_rgb = np.array(img.convert("RGB"))
+        except Exception:
+            status_placeholder.error("Could not decode camera frame.")
+            return
+
+        _hosted_run_detection(
+            frame_rgb,
+            mirror_horizontal=True,
+            tracker=tracker,
+            engine=engine,
+            image_placeholder=image_placeholder,
+            gesture_placeholder=gesture_placeholder,
+            status_placeholder=status_placeholder,
+        )
+        return
+
+    st.caption("No camera permission required — works in Cursor’s preview and locked-down browsers.")
+    up = st.file_uploader(
+        "Choose a JPG / PNG / WebP with a hand in frame",
+        type=["jpg", "jpeg", "png", "webp"],
+        key="gvm_upload_frame",
+    )
+    if up is None:
+        status_placeholder.markdown("**Status:** upload an image to run hand detection.")
         return
 
     try:
-        img = Image.open(BytesIO(img_file.getvalue()))
+        img = Image.open(BytesIO(up.getvalue()))
         frame_rgb = np.array(img.convert("RGB"))
     except Exception:
-        status_placeholder.error("Could not decode camera frame.")
+        status_placeholder.error("Could not read that image.")
         return
 
-    frame_rgb = np.ascontiguousarray(frame_rgb[:, ::-1, :])
-    frame_out, hands = tracker.process_rgb(frame_rgb)
-    command = engine.process(hands)
-
-    if command:
-        gesture_placeholder.markdown(f"**Gesture:** `{command.value}`")
-
-    image_placeholder.image(frame_out, channels="RGB", use_container_width=True)
-    status_placeholder.markdown(f"**Hands detected:** `{len(hands)}`")
+    _hosted_run_detection(
+        frame_rgb,
+        mirror_horizontal=False,
+        tracker=tracker,
+        engine=engine,
+        image_placeholder=image_placeholder,
+        gesture_placeholder=gesture_placeholder,
+        status_placeholder=status_placeholder,
+    )
 
 
 def create_engine_from_config(
