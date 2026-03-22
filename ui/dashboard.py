@@ -18,7 +18,7 @@ mediapipe_vision_stub.apply()
 
 import numpy as np
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageOps
 
 ROOT_DIR = _ROOT
 SRC_DIR = ROOT_DIR / "src"
@@ -33,6 +33,21 @@ from gesture_recognition.gesture_logic import GestureEngine, GestureCommand  # t
 
 
 CONFIG_PATH = ROOT_DIR / "config" / "config.json"
+
+
+def _bytes_to_rgb_uint8(raw: bytes) -> np.ndarray:
+    """
+    Decode camera snapshot / upload bytes to HxWx3 uint8 RGB.
+    Forces full decode and applies EXIF orientation (fixes sideways / blank-looking mobile shots).
+    """
+    img = Image.open(BytesIO(raw))
+    img.load()
+    img = ImageOps.exif_transpose(img)
+    img = img.convert("RGB")
+    arr = np.asarray(img, dtype=np.uint8)
+    if arr.ndim == 2:
+        arr = np.stack([arr, arr, arr], axis=-1)
+    return np.ascontiguousarray(arr)
 
 
 def load_config() -> dict:
@@ -83,6 +98,16 @@ def _hosted_run_detection(
     gesture_placeholder,
     status_placeholder,
 ) -> None:
+    if frame_rgb.size == 0 or frame_rgb.ndim != 3 or frame_rgb.shape[2] < 3:
+        status_placeholder.error("Invalid image shape — try another photo.")
+        return
+
+    if float(frame_rgb.mean()) < 6.0:
+        st.warning(
+            "This frame looks **very dark** (almost black). Use brighter light, "
+            "point the camera at yourself, or try **Upload image** with a clearer photo."
+        )
+
     if mirror_horizontal:
         frame_rgb = np.ascontiguousarray(frame_rgb[:, ::-1, :])
     else:
@@ -163,8 +188,7 @@ Embedded IDE browsers block camera. **Copy this page’s URL** and open it in **
             return
 
         try:
-            img = Image.open(BytesIO(img_file.getvalue()))
-            frame_rgb = np.array(img.convert("RGB"))
+            frame_rgb = _bytes_to_rgb_uint8(img_file.getvalue())
         except Exception:
             status_placeholder.error("Could not decode camera frame.")
             return
@@ -191,8 +215,7 @@ Embedded IDE browsers block camera. **Copy this page’s URL** and open it in **
         return
 
     try:
-        img = Image.open(BytesIO(up.getvalue()))
-        frame_rgb = np.array(img.convert("RGB"))
+        frame_rgb = _bytes_to_rgb_uint8(up.getvalue())
     except Exception:
         status_placeholder.error("Could not read that image.")
         return

@@ -175,10 +175,9 @@ class HandTracker:
 
     def _update_fps(self) -> None:
         current = time.time()
-        dt = current - self._prev_time
+        dt = max(current - self._prev_time, 1e-6)
         self._prev_time = current
-        if dt > 0:
-            self.fps = 1.0 / dt
+        self.fps = 1.0 / dt
 
     def read_frame(self) -> Tuple[bool, Optional[np.ndarray]]:
         """Read a frame from the camera."""
@@ -265,7 +264,7 @@ class HandTracker:
         mp_image = Image(image_format=ImageFormat.SRGB, data=frame_rgb)
         result = self._landmarker.detect(mp_image)
 
-        pil_img = PILImage.fromarray(frame_rgb)
+        pil_img = PILImage.fromarray(frame_rgb, mode="RGB")
         draw = ImageDraw.Draw(pil_img)
 
         hands_out: List[HandLandmarks] = []
