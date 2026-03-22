@@ -6,6 +6,10 @@ Alternatively: `streamlit run ui/dashboard.py` (same app).
 """
 from __future__ import annotations
 
+import mediapipe_vision_stub
+
+mediapipe_vision_stub.apply()
+
 import importlib.util
 import sys
 from pathlib import Path

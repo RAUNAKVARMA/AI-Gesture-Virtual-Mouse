@@ -46,11 +46,21 @@ class HandTracker:
         model_path: Optional[str] = None,
         use_opencv: bool = True,
     ) -> None:
-        from mediapipe.tasks import python as mp_python
-        from mediapipe.tasks.python import vision as mp_vision
+        # Direct imports avoid loading vision/__init__.py (drawing_utils -> cv2).
+        # Streamlit Cloud: ui/dashboard applies mediapipe_vision_stub first.
+        from mediapipe.tasks.python.core.base_options import BaseOptions
+        from mediapipe.tasks.python.vision.core.vision_task_running_mode import (
+            VisionTaskRunningMode,
+        )
+        from mediapipe.tasks.python.vision.hand_landmarker import (
+            HandLandmarker,
+            HandLandmarkerOptions,
+        )
 
-        self._mp_python = mp_python
-        self._mp_vision = mp_vision
+        self._BaseOptions = BaseOptions
+        self._HandLandmarker = HandLandmarker
+        self._HandLandmarkerOptions = HandLandmarkerOptions
+        self._VisionTaskRunningMode = VisionTaskRunningMode
 
         self.use_opencv = use_opencv
         self.camera_index = camera_index
@@ -98,18 +108,16 @@ class HandTracker:
             ) from exc
 
     def _create_landmarker(self) -> None:
-        from mediapipe.tasks.python.vision import RunningMode
-
         self._ensure_model()
-        base_options = self._mp_python.BaseOptions(model_asset_path=str(self.model_path))
-        options = self._mp_vision.HandLandmarkerOptions(
+        base_options = self._BaseOptions(model_asset_path=str(self.model_path))
+        options = self._HandLandmarkerOptions(
             base_options=base_options,
-            running_mode=RunningMode.IMAGE,
+            running_mode=self._VisionTaskRunningMode.IMAGE,
             num_hands=self.max_num_hands,
             min_hand_detection_confidence=self.min_detection_confidence,
             min_tracking_confidence=self.min_tracking_confidence,
         )
-        self._landmarker = self._mp_vision.HandLandmarker.create_from_options(options)
+        self._landmarker = self._HandLandmarker.create_from_options(options)
 
     def _detect_camera_index(self) -> int:
         """Automatically detect a working camera index."""
@@ -196,7 +204,7 @@ class HandTracker:
         if not self.use_opencv:
             raise RuntimeError("Use process_rgb() when use_opencv=False")
 
-        from mediapipe import Image, ImageFormat
+        from mediapipe.tasks.python.vision.core.image import Image, ImageFormat
 
         if self._landmarker is None:
             raise RuntimeError("HandTracker.open() must be called before process()")
@@ -236,7 +244,7 @@ class HandTracker:
 
         Draws overlays with Pillow. Returns RGB image with same shape.
         """
-        from mediapipe import Image, ImageFormat
+        from mediapipe.tasks.python.vision.core.image import Image, ImageFormat
         from PIL import Image as PILImage
         from PIL import ImageDraw
 

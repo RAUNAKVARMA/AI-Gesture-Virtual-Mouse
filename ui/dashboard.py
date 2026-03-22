@@ -2,10 +2,19 @@ import copy
 import json
 import logging
 import os
+import sys
 from io import BytesIO
 from pathlib import Path
 from threading import Thread, Event
 from typing import Optional
+
+# Repo root on path so mediapipe_vision_stub can be imported when running `streamlit run ui/dashboard.py`
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+import mediapipe_vision_stub
+
+mediapipe_vision_stub.apply()
 
 import numpy as np
 import streamlit as st
@@ -13,7 +22,7 @@ from PIL import Image
 
 import sys
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
+ROOT_DIR = _ROOT
 SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
