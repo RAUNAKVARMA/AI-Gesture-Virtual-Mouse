@@ -276,7 +276,7 @@ Hosted apps **do not** have a physical webcam on the server, and **PyAutoGUI** w
 - **Calibration** (OpenCV desktop window).
 - High‑FPS threaded webcam loop in the dashboard (uses local `VideoCapture` when **not** in cloud mode).
 
-`packages.txt` at the repo root supplies `libgl1` / `libglib2.0-0` for OpenCV on Linux builders.
+`packages.txt` supplies `libgl1`, `libgles2`, and `libegl1` for MediaPipe on Linux. The hosted Streamlit app does **not** import OpenCV (avoids GLib / `libgthread` apt conflicts on the builder); use `python src/main.py` locally for the full OpenCV preview.
 
 ---
 

@@ -2,13 +2,14 @@ import copy
 import json
 import logging
 import os
+from io import BytesIO
 from pathlib import Path
 from threading import Thread, Event
 from typing import Optional
 
-import cv2
 import numpy as np
 import streamlit as st
+from PIL import Image
 
 import sys
 
@@ -22,7 +23,6 @@ from cursor_control.control_zone import ControlZone  # type: ignore
 from cursor_control.mouse_controller import MouseController  # type: ignore
 from gesture_recognition.gesture_classifier import GestureClassifier  # type: ignore
 from gesture_recognition.gesture_logic import GestureEngine, GestureCommand  # type: ignore
-from calibration.calibrator import Calibrator  # type: ignore
 
 
 CONFIG_PATH = ROOT_DIR / "config" / "config.json"
@@ -61,7 +61,7 @@ def ensure_hosted_tracker_engine(cfg: dict) -> tuple[HandTracker, GestureEngine]
     if key not in st.session_state:
         cfg_h = copy.deepcopy(cfg)
         cfg_h.setdefault("gestures", {})["demo_mode"] = True
-        tracker, _mouse, engine = create_engine_from_config(cfg_h)
+        tracker, _mouse, engine = create_engine_from_config(cfg_h, use_opencv=False)
         tracker.open(use_camera=False)
         st.session_state[key] = (tracker, engine)
     return st.session_state[key]
@@ -88,25 +88,27 @@ def render_cloud_browser_camera_ui(
         status_placeholder.markdown("**Status:** waiting for camera permission / first frame…")
         return
 
-    data = np.frombuffer(img_file.getvalue(), dtype=np.uint8)
-    frame_bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
-    if frame_bgr is None:
+    try:
+        img = Image.open(BytesIO(img_file.getvalue()))
+        frame_rgb = np.array(img.convert("RGB"))
+    except Exception:
         status_placeholder.error("Could not decode camera frame.")
         return
 
-    frame_bgr = cv2.flip(frame_bgr, 1)
-    frame_out, hands = tracker.process(frame_bgr)
+    frame_rgb = np.ascontiguousarray(frame_rgb[:, ::-1, :])
+    frame_out, hands = tracker.process_rgb(frame_rgb)
     command = engine.process(hands)
 
     if command:
         gesture_placeholder.markdown(f"**Gesture:** `{command.value}`")
 
-    frame_rgb = cv2.cvtColor(frame_out, cv2.COLOR_BGR2RGB)
-    image_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
+    image_placeholder.image(frame_out, channels="RGB", use_container_width=True)
     status_placeholder.markdown(f"**Hands detected:** `{len(hands)}`")
 
 
-def create_engine_from_config(cfg: dict) -> tuple[HandTracker, MouseController, GestureEngine]:
+def create_engine_from_config(
+    cfg: dict, *, use_opencv: bool = True
+) -> tuple[HandTracker, MouseController, GestureEngine]:
     cam_cfg = cfg.get("camera", {})
     ht_cfg = cfg.get("hand_tracking", {})
     cz_cfg = cfg.get("control_zone", {})
@@ -136,6 +138,7 @@ def create_engine_from_config(cfg: dict) -> tuple[HandTracker, MouseController, 
             control_zone.x_max,
             control_zone.y_max,
         ),
+        use_opencv=use_opencv,
     )
 
     mouse = MouseController(
@@ -162,8 +165,10 @@ def create_engine_from_config(cfg: dict) -> tuple[HandTracker, MouseController, 
 
 
 def run_loop(stop_event: Event, status_placeholder, image_placeholder, gesture_placeholder) -> None:
+    import cv2
+
     cfg = load_config()
-    tracker, _, engine = create_engine_from_config(cfg)
+    tracker, _, engine = create_engine_from_config(cfg, use_opencv=True)
 
     tracker.open()
     try:
@@ -188,6 +193,8 @@ def run_loop(stop_event: Event, status_placeholder, image_placeholder, gesture_p
 
 
 def run_calibration(status_placeholder) -> None:
+    from calibration.calibrator import Calibrator  # noqa: PLC0415 — local import avoids cv2 on Cloud
+
     cfg = load_config()
     cam_cfg = cfg.get("camera", {})
     ht_cfg = cfg.get("hand_tracking", {})
