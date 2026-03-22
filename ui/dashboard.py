@@ -88,9 +88,21 @@ def render_cloud_browser_camera_ui(
         "clone the repo and run locally (`python src/main.py` or Streamlit without cloud mode) "
         "for real cursor control."
     )
+    with st.expander("Camera blocked or “Take Photo” grayed out? Allow access here"):
+        st.markdown(
+            """
+1. **Browser:** Click the **lock** or **site settings** icon in the address bar → find **Camera** → choose **Allow** (not “Block”).
+2. **Reload** the page after changing permission.
+3. **Close other apps** using the webcam (Zoom, Teams, Skype, another browser tab with camera).
+4. **Windows:** Settings → Privacy & security → **Camera** → turn **on** “Let desktop apps access your camera” and allow your browser.
+5. **HTTPS:** Streamlit Cloud uses HTTPS; if you ever run locally over plain `http://`, some browsers block camera — use `localhost` or HTTPS.
+
+After permission is granted, the camera preview should appear and frames will process automatically.
+            """
+        )
     tracker, engine = ensure_hosted_tracker_engine(cfg)
     img_file = st.camera_input(
-        "Allow camera — preview updates as Streamlit receives frames",
+        "Camera preview (grant permission when the browser asks)",
         key="gvm_browser_camera",
     )
     if img_file is None:
