@@ -110,19 +110,26 @@ def render_cloud_browser_camera_ui(
         "clone the repo and run locally (`python src/main.py` or Streamlit without cloud mode) "
         "for real cursor control."
     )
-    st.error(
-        "**No “magic button” for camera:** browsers never let a website turn the camera on without **your** permission. "
-        "**If this tab is inside Cursor, VS Code, or a small embedded preview, the camera is usually blocked forever** — "
-        "copy your Streamlit URL and open it in **Chrome** or **Edge** (full window)."
+    st.warning(
+        "**Camera needs a real browser window** (not Cursor’s embedded preview). "
+        "**Default below is “Upload image”** — no camera prompt required. "
+        "For webcam, Chrome only shows **Allow / Block** after you **click** the camera area (or if the site wasn’t blocked before)."
     )
-    with st.expander("Webcam: allow access in the browser (click lock icon → Camera → Allow)"):
+    with st.expander("Why don’t I see Chrome’s “Allow camera” (step 3)? Fix it"):
         st.markdown(
             """
-1. **Address bar** → **lock** or **tune** icon → **Site settings** → **Camera** → **Allow** → reload the page.
-2. Close Zoom / Teams / other apps using the webcam.
-3. **Windows:** Settings → Privacy → **Camera** → allow desktop apps and your browser.
+**A. You must click the camera widget first**  
+Chrome often shows the permission bar **only after** you click inside the gray camera box or **“Take photo”**. Nothing appears if you only scroll the page.
 
-**Or skip the webcam** and use the **Upload image** tab — no permission needed.
+**B. You clicked “Block” earlier**  
+Chrome will **not** ask again on that site. Reset it:
+1. Click the **lock** or **tune** icon left of the address bar → **Site settings** → **Camera** → choose **Allow**.
+2. Or open a new tab, paste: `chrome://settings/content/camera` → under **Blocked**, find `streamlit.app` (or your URL) → **delete** the block → reload this app.
+
+**C. Wrong environment**  
+Embedded IDE browsers block camera. **Copy this page’s URL** and open it in **Chrome** or **Edge** normally.
+
+**Official help:** [Chrome camera & microphone](https://support.google.com/chrome/answer/2693767)
             """
         )
 
@@ -130,15 +137,24 @@ def render_cloud_browser_camera_ui(
 
     input_mode = st.radio(
         "Choose input",
-        ["Webcam", "Upload image (no camera permission needed)"],
+        [
+            "Upload image (no camera — recommended)",
+            "Webcam",
+        ],
         horizontal=True,
+        index=0,
         key="gvm_cloud_input_mode",
     )
 
-    if input_mode.startswith("Webcam"):
+    if input_mode == "Webcam":
+        st.markdown(
+            "**Next:** click once inside the camera area below — Chrome should then show **Allow while visiting the site** "
+            "or **Block** at the top of the page (or in the address bar)."
+        )
         img_file = st.camera_input(
-            "Allow the browser’s camera prompt, then capture",
+            "Camera (click here to trigger the permission prompt if needed)",
             key="gvm_browser_camera",
+            help="Browsers require a click on this widget before showing Allow/Block. If you blocked this site before, reset under the lock icon → Site settings → Camera.",
         )
         if img_file is None:
             status_placeholder.markdown(
