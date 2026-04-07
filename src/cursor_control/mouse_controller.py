@@ -45,6 +45,7 @@ class MouseController:
             screen_width, screen_height = 1920, 1080
 
         self.screen_size: Tuple[int, int] = (screen_width, screen_height)
+        self._refresh_screen_size_each_move = True
         self.smoother = PositionSmoother(window_size=5, alpha=smoothing_factor)
 
         logger.info(
@@ -77,15 +78,20 @@ class MouseController:
     def move_from_normalized(self, x_norm: float, y_norm: float) -> None:
         """
         Move cursor from a normalized camera coordinate in [0,1]x[0,1].
+        Maps using the current screen size from pyautogui.size() when available.
         """
 
         if not self.enabled:
             return
 
+        if MOUSE_AVAILABLE and self._refresh_screen_size_each_move:
+            self.screen_size = pyautogui.size()
+
         x, y = self.control_zone.map_to_screen(
             x_norm,
             y_norm,
-            *self.screen_size,
+            int(self.screen_size[0]),
+            int(self.screen_size[1]),
         )
 
         x, y = self._apply_sensitivity(x, y)
@@ -96,7 +102,7 @@ class MouseController:
             logger.debug("Demo move cursor to (%.1f, %.1f)", x, y)
             return
 
-        pyautogui.moveTo(x, y, duration=0.0)
+        pyautogui.moveTo(int(round(x)), int(round(y)), duration=0.0)
 
 
     def left_click(self) -> None:

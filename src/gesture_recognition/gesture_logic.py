@@ -1,3 +1,4 @@
+import time
 from collections import Counter, deque
 from dataclasses import dataclass
 from enum import Enum
@@ -55,9 +56,13 @@ class GestureEngine:
         # "auto" | "right" | "left" — which hand drives cursor when both visible
         self._cursor_hand_mode = (cursor_hand_mode or "auto").lower()
 
-        # Temporal smoothing
+        # Temporal smoothing (snappier for pinch clicks; debounce handles double-clicks)
         self._window: Deque[GestureCommand] = deque(maxlen=5)
-        self._min_stable_frames = 3
+        self._min_stable_frames = 2
+
+        self._click_debounce_s = 0.35
+        self._last_left_click_t = 0.0
+        self._last_right_click_t = 0.0
 
     def process(self, hands: List[HandLandmarks]) -> Optional[GestureCommand]:
         """
@@ -100,9 +105,9 @@ class GestureEngine:
         if count < self._min_stable_frames and self.ctx.last_command is not None:
             command = self.ctx.last_command
 
-        # Control zone from the hand actually driving gestures
+        # Control zone from index fingertip (landmark 8)
         if cursor_hand is not None:
-            cx, cy = self.control_zone.center_of_hand(cursor_hand.landmarks)
+            cx, cy = float(cursor_hand.landmarks[8, 0]), float(cursor_hand.landmarks[8, 1])
             in_zone = self.control_zone.contains(cx, cy)
         else:
             cx, cy, in_zone = 0.5, 0.5, False
@@ -129,9 +134,15 @@ class GestureEngine:
         if command == GestureCommand.MOVE_CURSOR and cursor_hand is not None and actions_enabled:
             self._handle_move(cursor_hand)
         elif command == GestureCommand.LEFT_CLICK and actions_enabled:
-            self.mouse.left_click()
+            now = time.monotonic()
+            if now - self._last_left_click_t >= self._click_debounce_s:
+                self.mouse.left_click()
+                self._last_left_click_t = now
         elif command == GestureCommand.RIGHT_CLICK and actions_enabled:
-            self.mouse.right_click()
+            now = time.monotonic()
+            if now - self._last_right_click_t >= self._click_debounce_s:
+                self.mouse.right_click()
+                self._last_right_click_t = now
         elif command == GestureCommand.SCROLL and actions_enabled:
             # Two hands: optional finer scroll from non-cursor hand; else use cursor hand Y
             ref = scroll_assist_hand if scroll_assist_hand is not None else cursor_hand
@@ -200,9 +211,13 @@ class GestureEngine:
             state[name] = pts[tip, 1] < pts[pip, 1] - 0.01
         return state
 
-    def _get_pinch_distance(self, hand: HandLandmarks) -> float:
+    def _get_thumb_index_pinch_distance(self, hand: HandLandmarks) -> float:
         pts = hand.landmarks
         return float(np.linalg.norm(pts[4, :2] - pts[8, :2]))
+
+    def _get_index_middle_pinch_distance(self, hand: HandLandmarks) -> float:
+        pts = hand.landmarks
+        return float(np.linalg.norm(pts[8, :2] - pts[12, :2]))
 
     def _get_threshold(self, gesture_name: str, default: float) -> float:
         """
@@ -236,11 +251,12 @@ class GestureEngine:
             return GestureCommand.PAUSE
 
         right_state = self._finger_state(cursor_hand)
-        pinch_dist = self._get_pinch_distance(cursor_hand)
+        thumb_index_dist = self._get_thumb_index_pinch_distance(cursor_hand)
+        index_middle_dist = self._get_index_middle_pinch_distance(cursor_hand)
 
         pinch_thresh = self._get_threshold("pinch", default=0.06)
+        right_pinch_thresh = self._get_threshold("right_pinch", default=0.07)
         open_thresh = self._get_threshold("open_palm", default=0.12)
-        fist_thresh = self._get_threshold("closed_fist", default=0.05)
 
         # Cache finger state for debug overlays
         bits = (
@@ -253,49 +269,42 @@ class GestureEngine:
         self.ctx.last_finger_state = right_state
         self.ctx.last_finger_bits = bits
 
-        # Closed fist: all fingers down or very small spread
-        if not any(right_state.values()) or pinch_dist < fist_thresh:
+        # Closed fist: all finger tips down (do not use thumb–index distance — it is small during pinch)
+        if not any(right_state.values()):
             return GestureCommand.PAUSE
 
         # Open palm: all fingers up and spread
-        if all(right_state.values()) and pinch_dist > open_thresh:
+        if all(right_state.values()) and thumb_index_dist > open_thresh:
             return GestureCommand.RESUME
 
-        # Pinch (thumb + index together) → left click
-        if pinch_dist < pinch_thresh:
+        # Thumb + index pinch → left click (prefer over index–middle when both tight)
+        if thumb_index_dist < pinch_thresh:
             return GestureCommand.LEFT_CLICK
 
-        # Two fingers (index + middle up) → scroll (handled via left hand if available)
+        # Index + middle pinch → right click
+        if index_middle_dist < right_pinch_thresh:
+            return GestureCommand.RIGHT_CLICK
+
+        # Two fingers (index + middle up, not pinched) → scroll
         if (
             right_state["index"]
             and right_state["middle"]
             and not right_state["ring"]
             and not right_state["pinky"]
+            and index_middle_dist >= right_pinch_thresh
         ):
             return GestureCommand.SCROLL
 
-        # Three fingers (index + middle + ring) → right click
-        if (
-            right_state["index"]
-            and right_state["middle"]
-            and right_state["ring"]
-            and not right_state["pinky"]
-        ):
-            return GestureCommand.RIGHT_CLICK
-
-        # Index finger up only → move cursor
-        if (
-            right_state["index"]
-            and not right_state["middle"]
-            and not right_state["ring"]
-            and not right_state["pinky"]
-        ):
+        # Point / hover: index extended → move cursor using landmark 8
+        pts = cursor_hand.landmarks
+        if pts[8, 1] < pts[6, 1] - 0.02:
             return GestureCommand.MOVE_CURSOR
 
         return None
 
     def _handle_move(self, hand: HandLandmarks) -> None:
-        cx, cy = self.control_zone.center_of_hand(hand.landmarks)
+        # MediaPipe index fingertip (landmark 8), normalized [0,1]
+        cx, cy = float(hand.landmarks[8, 0]), float(hand.landmarks[8, 1])
         if not self.control_zone.contains(cx, cy):
             return
         self.mouse.move_from_normalized(cx, cy)

@@ -43,6 +43,7 @@ class HandTracker:
         min_tracking_confidence: float = 0.5,
         draw_landmarks: bool = True,
         show_control_zone: bool = True,
+        show_fps: bool = True,
         control_zone: Tuple[float, float, float, float] = (0.2, 0.2, 0.8, 0.8),
         model_path: Optional[str] = None,
         use_opencv: bool = True,
@@ -77,6 +78,7 @@ class HandTracker:
 
         self.draw_landmarks = draw_landmarks
         self.show_control_zone = show_control_zone
+        self.show_fps = show_fps
         self.control_zone = control_zone  # (x_min, y_min, x_max, y_max) in [0,1]
 
         self._prev_time = time.time()
@@ -246,7 +248,8 @@ class HandTracker:
         if self.show_control_zone:
             self._draw_control_zone(frame_bgr)
 
-        self._draw_fps(frame_bgr)
+        if self.show_fps:
+            self._draw_fps(frame_bgr)
         return frame_bgr, hands_out
 
     def process_rgb(self, frame_rgb: np.ndarray) -> Tuple[np.ndarray, List[HandLandmarks]]:
@@ -308,7 +311,8 @@ class HandTracker:
             x1, y1 = int(x_max * w), int(y_max * h)
             draw.rectangle([x0, y0, x1, y1], outline=(0, 255, 0), width=2)
 
-        draw.text((10, 10), f"FPS: {self.fps:.1f}", fill=(255, 255, 255))
+        if self.show_fps:
+            draw.text((10, 10), f"FPS: {self.fps:.1f}", fill=(255, 255, 255))
 
         out = np.array(pil_img)
         return out, hands_out

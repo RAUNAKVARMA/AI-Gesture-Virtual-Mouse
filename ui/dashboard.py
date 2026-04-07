@@ -37,8 +37,9 @@ from gesture_recognition.gesture_logic import GestureEngine  # type: ignore
 
 CONFIG_PATH = ROOT_DIR / "config" / "config.json"
 
+CAMERA_ERROR = "Camera not accessible"
 CAMERA_FALLBACK_MESSAGE = (
-    "Camera not accessible. Please allow permissions or run locally."
+    f"{CAMERA_ERROR}. Please allow permissions or run locally."
 )
 
 
@@ -95,10 +96,14 @@ def release_local_webcam_cap() -> None:
 
 
 def ensure_local_opencv_engine(cfg: dict) -> tuple[HandTracker, GestureEngine]:
-    """Hand landmarker without opening cv2.VideoCapture inside HandTracker (Streamlit owns the capture)."""
+    """
+    MediaPipe + rule-based finger control (landmark 8 move, pinches for clicks).
+    Classifier off so gestures are deterministic from MediaPipe Hands.
+    """
     key = "gvm_local_opencv_engine"
     if key not in st.session_state:
         cfg_h = copy.deepcopy(cfg)
+        cfg_h.setdefault("gestures", {})["use_classifier"] = False
         t, _m, engine = create_engine_from_config(cfg_h, use_opencv=True)
         t.open(use_camera=False)
         st.session_state[key] = (t, engine)
@@ -428,6 +433,7 @@ def create_engine_from_config(
         min_tracking_confidence=ht_cfg.get("min_tracking_confidence", 0.5),
         draw_landmarks=cfg.get("ui", {}).get("show_landmarks", True),
         show_control_zone=cfg.get("ui", {}).get("show_control_zone", True),
+        show_fps=cfg.get("ui", {}).get("show_fps", True),
         control_zone=(
             control_zone.x_min,
             control_zone.y_min,
@@ -462,66 +468,55 @@ def create_engine_from_config(
 
 def render_local_opencv_live(
     cfg: dict,
-    status_placeholder,
     image_placeholder,
+    status_placeholder,
     gesture_placeholder,
 ) -> None:
     """
-    Read frames with OpenCV on the host, run MediaPipe on each frame, and display inside Streamlit.
-    Uses st.fragment(run_every=...) so updates happen on Streamlit's thread (no background UI updates).
+    Auto-starts webcam, mirrors horizontally, downscales frames for speed, runs MediaPipe each tick.
+    Cursor: index tip (8). Clicks: thumb–index / index–middle pinches with debounce in GestureEngine.
     """
     import cv2
 
-    st.info(
-        "**Local OpenCV:** The Python process on your PC reads the webcam. "
-        "This does not work on Streamlit Cloud — run `streamlit run streamlit_app.py` on Windows."
+    st.caption(
+        "Webcam starts automatically. **Point** with your index finger to move the mouse; **pinch** thumb+index "
+        "for left click, index+middle for right click. Run locally (not Streamlit Cloud)."
     )
 
     if not hasattr(st, "fragment"):
-        st.error(
-            "Live OpenCV requires Streamlit >= 1.33 (`st.fragment`). "
-            f"Upgrade Streamlit or switch to **Browser camera**. {CAMERA_FALLBACK_MESSAGE}"
+        status_placeholder.error(
+            "Upgrade to Streamlit >= 1.33 for live video (`st.fragment`). " + CAMERA_FALLBACK_MESSAGE
         )
         return
 
-    col_go, col_stop = st.columns(2)
-    with col_go:
-        if st.button("▶ Start live feed", type="primary", key="gvm_start_live"):
-            st.session_state["gvm_live_wants_start"] = True
-            st.rerun()
-    with col_stop:
-        if st.button("⏹ Stop", key="gvm_stop_live"):
-            st.session_state["gvm_live_wants_start"] = False
-            release_local_webcam_cap()
-            st.rerun()
-
-    if not st.session_state.get("gvm_live_wants_start", False):
-        status_placeholder.markdown("**Status:** idle — click **Start live feed**.")
-        return
-
     if st.session_state.get("gvm_local_cap") is None:
-        with st.spinner("Opening webcam…"):
-            cap, err = open_local_webcam_capture(cfg)
+        with st.spinner("Opening camera…"):
+            cap, _err = open_local_webcam_capture(cfg)
         if cap is None:
-            st.session_state["gvm_live_wants_start"] = False
-            status_placeholder.error(f"{CAMERA_FALLBACK_MESSAGE} {err}")
+            status_placeholder.error(CAMERA_ERROR)
+            gesture_placeholder.empty()
+            image_placeholder.empty()
             return
         st.session_state["gvm_local_cap"] = cap
 
+    cam_cfg = cfg.get("camera", {})
+    proc_w = int(cam_cfg.get("process_width", 480))
+    proc_h = int(cam_cfg.get("process_height", 270))
+
     tracker, engine = ensure_local_opencv_engine(cfg)
 
-    @st.fragment(run_every=0.05)
+    @st.fragment(run_every=0.04)
     def _live_tick() -> None:
         cap = st.session_state.get("gvm_local_cap")
-        if cap is None or not st.session_state.get("gvm_live_wants_start", False):
+        if cap is None:
             return
         ok, frame = cap.read()
         if not ok or frame is None:
-            status_placeholder.warning(
-                f"{CAMERA_FALLBACK_MESSAGE} No frame read — release other apps using the camera, then Stop/Start."
-            )
+            status_placeholder.error(CAMERA_ERROR)
             return
         frame = cv2.flip(frame, 1)
+        if proc_w > 0 and proc_h > 0:
+            frame = cv2.resize(frame, (proc_w, proc_h), interpolation=cv2.INTER_AREA)
         try:
             frame_out, hands = tracker.process(frame)
         except Exception as exc:
@@ -533,7 +528,7 @@ def render_local_opencv_live(
         frame_rgb = cv2.cvtColor(frame_out, cv2.COLOR_BGR2RGB)
         image_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
         status_placeholder.markdown(
-            f"**FPS:** `{tracker.fps:.1f}` · **Hands:** `{len(hands)}` · **OpenCV + MediaPipe (local)**"
+            f"**FPS (processing):** `{tracker.fps:.1f}` · **Hands:** `{len(hands)}` · **Index tip → cursor**"
         )
 
     _live_tick()
@@ -592,39 +587,20 @@ def main() -> None:
                 cfg, status_placeholder, image_placeholder, gesture_placeholder
             )
         else:
-            st.warning(
-                "**Local run:** Webcam access requires running Streamlit on your own PC "
-                "(not Streamlit Community Cloud). Open this app in **Chrome** or **Edge** if you use browser camera."
+            st.info(
+                "Running on **your PC**: the camera opens automatically and **pyautogui** drives the system cursor."
             )
-            local_mode = st.radio(
-                "Camera source",
-                [
-                    "Live OpenCV (server webcam)",
-                    "Browser camera (st.camera_input)",
-                ],
-                horizontal=True,
-                key="gvm_local_camera_mode",
+            if st.button("🎬 Toggle demo mode (no real mouse)", key="gvm_demo_toggle_local"):
+                gest_cfg = cfg.get("gestures", {})
+                gest_cfg["demo_mode"] = not gest_cfg.get("demo_mode", False)
+                cfg["gestures"] = gest_cfg
+                save_config(cfg)
+                for k in ("gvm_local_opencv_engine", "local_browser_tracker_engine", "hosted_tracker_engine"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+            render_local_opencv_live(
+                cfg, image_placeholder, status_placeholder, gesture_placeholder
             )
-            demo_col, _ = st.columns([1, 2])
-            with demo_col:
-                if st.button("🎬 Demo mode toggle", key="gvm_demo_toggle_local"):
-                    gest_cfg = cfg.get("gestures", {})
-                    gest_cfg["demo_mode"] = not gest_cfg.get("demo_mode", True)
-                    cfg["gestures"] = gest_cfg
-                    save_config(cfg)
-                    for k in ("gvm_local_opencv_engine", "local_browser_tracker_engine", "hosted_tracker_engine"):
-                        st.session_state.pop(k, None)
-                    st.success(
-                        f"Demo mode set to {gest_cfg['demo_mode']}. Engine reloaded on next frame."
-                    )
-            if local_mode.startswith("Live OpenCV"):
-                render_local_opencv_live(
-                    cfg, status_placeholder, image_placeholder, gesture_placeholder
-                )
-            else:
-                render_local_browser_camera_path(
-                    cfg, status_placeholder, image_placeholder, gesture_placeholder
-                )
 
     with col_right:
         st.subheader("Control Settings")
@@ -649,7 +625,8 @@ def main() -> None:
             cursor_cfg["smoothing_factor"] = smoothing
             cfg["cursor"] = cursor_cfg
             save_config(cfg)
-            st.success("Settings saved. Restart control loop to apply.")
+            st.session_state.pop("gvm_local_opencv_engine", None)
+            st.success("Settings saved. Tracking engine will reload on the next video frame.")
 
         st.subheader("Calibration")
         if cloud_mode:
@@ -660,8 +637,10 @@ def main() -> None:
         if st.button("Run calibration"):
             if cloud_mode:
                 st.error("Calibration is not available in Streamlit Cloud mode.")
-            elif st.session_state.get("gvm_live_wants_start") and st.session_state.get("gvm_local_cap") is not None:
-                st.warning("Stop the live OpenCV feed before running calibration.")
+            elif st.session_state.get("gvm_local_cap") is not None:
+                st.warning(
+                    "Close this Streamlit tab (or stop the server) so the webcam is free, then run calibration."
+                )
             else:
                 Thread(target=run_calibration, args=(calib_status,), daemon=True).start()
 
