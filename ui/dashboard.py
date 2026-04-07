@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import json
 import os
@@ -5,7 +7,7 @@ import sys
 from io import BytesIO
 from pathlib import Path
 from threading import Thread
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 # Repo root on path so mediapipe_vision_stub can be imported when running `streamlit run ui/dashboard.py`
 _ROOT = Path(__file__).resolve().parents[1]
@@ -28,11 +30,21 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 
-from hand_tracking.hand_tracker import HandTracker  # type: ignore
-from cursor_control.control_zone import ControlZone  # type: ignore
-from cursor_control.mouse_controller import MouseController  # type: ignore
-from gesture_recognition.gesture_classifier import GestureClassifier  # type: ignore
-from gesture_recognition.gesture_logic import GestureEngine  # type: ignore
+_LAZY_DEPS: tuple[Any, ...] | None = None
+
+
+def _lazy_deps() -> tuple[Any, ...]:
+    """Import heavy gesture stack only when needed (faster Streamlit cold start)."""
+    global _LAZY_DEPS
+    if _LAZY_DEPS is None:
+        from cursor_control.control_zone import ControlZone  # type: ignore
+        from cursor_control.mouse_controller import MouseController  # type: ignore
+        from gesture_recognition.gesture_classifier import GestureClassifier  # type: ignore
+        from gesture_recognition.gesture_logic import GestureEngine  # type: ignore
+        from hand_tracking.hand_tracker import HandTracker  # type: ignore
+
+        _LAZY_DEPS = (HandTracker, ControlZone, MouseController, GestureClassifier, GestureEngine)
+    return _LAZY_DEPS
 
 
 CONFIG_PATH = ROOT_DIR / "config" / "config.json"
@@ -55,8 +67,9 @@ def open_local_webcam_capture(cfg: dict) -> Tuple[Optional[object], str]:
     cam_cfg = cfg.get("camera", {})
     configured = cam_cfg.get("index", -1)
     max_idx = max(cam_cfg.get("max_search_index", 4), 1)
-    width = int(cam_cfg.get("width", 960))
-    height = int(cam_cfg.get("height", 540))
+    # Lower capture resolution speeds up driver init (processing size is separate).
+    width = int(cam_cfg.get("capture_width", cam_cfg.get("width", 640)))
+    height = int(cam_cfg.get("capture_height", cam_cfg.get("height", 360)))
 
     def try_index(idx: int):
         if sys.platform == "win32":
@@ -95,7 +108,7 @@ def release_local_webcam_cap() -> None:
             pass
 
 
-def ensure_local_opencv_engine(cfg: dict) -> tuple[HandTracker, GestureEngine]:
+def ensure_local_opencv_engine(cfg: dict) -> tuple[Any, Any]:
     """
     MediaPipe + rule-based finger control (landmark 8 move, pinches for clicks).
     Classifier off so gestures are deterministic from MediaPipe Hands.
@@ -188,7 +201,7 @@ def use_streamlit_cloud_mode(cfg: dict) -> bool:
     return bool(cfg.get("deployment", {}).get("streamlit_cloud", False))
 
 
-def ensure_hosted_tracker_engine(cfg: dict) -> tuple[HandTracker, GestureEngine]:
+def ensure_hosted_tracker_engine(cfg: dict) -> tuple[Any, Any]:
     """One landmarker + engine per session (Streamlit Cloud / browser camera)."""
     key = "hosted_tracker_engine"
     if key not in st.session_state:
@@ -200,7 +213,7 @@ def ensure_hosted_tracker_engine(cfg: dict) -> tuple[HandTracker, GestureEngine]
     return st.session_state[key]
 
 
-def ensure_local_browser_tracker_engine(cfg: dict) -> tuple[HandTracker, GestureEngine]:
+def ensure_local_browser_tracker_engine(cfg: dict) -> tuple[Any, Any]:
     """Browser camera on a local Streamlit run — respects config (e.g. demo_mode off for real mouse)."""
     key = "local_browser_tracker_engine"
     if key not in st.session_state:
@@ -214,8 +227,8 @@ def ensure_local_browser_tracker_engine(cfg: dict) -> tuple[HandTracker, Gesture
 def _hosted_run_detection(
     frame_rgb: np.ndarray,
     mirror_horizontal: bool,
-    tracker: HandTracker,
-    engine: GestureEngine,
+    tracker: Any,
+    engine: Any,
     image_placeholder,
     gesture_placeholder,
     status_placeholder,
@@ -279,8 +292,6 @@ Embedded IDE browsers block camera. **Copy this page’s URL** and open it in **
 **Official help:** [Chrome camera & microphone](https://support.google.com/chrome/answer/2693767)
             """
         )
-
-    tracker, engine = ensure_hosted_tracker_engine(cfg)
 
     input_mode = st.radio(
         "Choose input",
@@ -363,6 +374,7 @@ Embedded IDE browsers block camera. **Copy this page’s URL** and open it in **
             )
             return
 
+        tracker, engine = ensure_hosted_tracker_engine(cfg)
         try:
             frame_rgb = _bytes_to_rgb_uint8(img_file.getvalue())
         except Exception:
@@ -390,6 +402,7 @@ Embedded IDE browsers block camera. **Copy this page’s URL** and open it in **
         status_placeholder.markdown("**Status:** upload an image to run hand detection.")
         return
 
+    tracker, engine = ensure_hosted_tracker_engine(cfg)
     try:
         frame_rgb = _bytes_to_rgb_uint8(up.getvalue())
     except Exception:
@@ -409,7 +422,8 @@ Embedded IDE browsers block camera. **Copy this page’s URL** and open it in **
 
 def create_engine_from_config(
     cfg: dict, *, use_opencv: bool = True
-) -> tuple[HandTracker, MouseController, GestureEngine]:
+) -> tuple[Any, Any, Any]:
+    HandTracker, ControlZone, MouseController, GestureClassifier, GestureEngine = _lazy_deps()
     cam_cfg = cfg.get("camera", {})
     ht_cfg = cfg.get("hand_tracking", {})
     cz_cfg = cfg.get("control_zone", {})
@@ -474,10 +488,8 @@ def render_local_opencv_live(
 ) -> None:
     """
     Auto-starts webcam, mirrors horizontally, downscales frames for speed, runs MediaPipe each tick.
-    Cursor: index tip (8). Clicks: thumb–index / index–middle pinches with debounce in GestureEngine.
+    Camera + MediaPipe init run inside the fragment so the page shell renders immediately.
     """
-    import cv2
-
     st.caption(
         "Webcam starts automatically. **Point** with your index finger to move the mouse; **pinch** thumb+index "
         "for left click, index+middle for right click. Run locally (not Streamlit Cloud)."
@@ -489,24 +501,38 @@ def render_local_opencv_live(
         )
         return
 
-    if st.session_state.get("gvm_local_cap") is None:
-        with st.spinner("Opening camera…"):
-            cap, _err = open_local_webcam_capture(cfg)
-        if cap is None:
-            status_placeholder.error(CAMERA_ERROR)
-            gesture_placeholder.empty()
-            image_placeholder.empty()
-            return
-        st.session_state["gvm_local_cap"] = cap
+    status_placeholder.info(
+        "**Ready.** Loading camera and hand model in the background — video appears in a few seconds on first open."
+    )
 
     cam_cfg = cfg.get("camera", {})
     proc_w = int(cam_cfg.get("process_width", 480))
     proc_h = int(cam_cfg.get("process_height", 270))
 
-    tracker, engine = ensure_local_opencv_engine(cfg)
-
     @st.fragment(run_every=0.04)
     def _live_tick() -> None:
+        import cv2
+
+        if st.session_state.get("gvm_camera_failed") or st.session_state.get("gvm_hand_init_failed"):
+            return
+
+        if st.session_state.get("gvm_local_cap") is None:
+            cap, _err = open_local_webcam_capture(cfg)
+            if cap is None:
+                st.session_state["gvm_camera_failed"] = True
+                status_placeholder.error(CAMERA_ERROR)
+                gesture_placeholder.empty()
+                image_placeholder.empty()
+                return
+            st.session_state["gvm_local_cap"] = cap
+
+        try:
+            tracker, engine = ensure_local_opencv_engine(cfg)
+        except Exception as exc:
+            st.session_state["gvm_hand_init_failed"] = True
+            status_placeholder.error(f"Hand tracking failed to start: `{exc}`")
+            return
+
         cap = st.session_state.get("gvm_local_cap")
         if cap is None:
             return
@@ -537,6 +563,7 @@ def render_local_opencv_live(
 def run_calibration(status_placeholder) -> None:
     from calibration.calibrator import Calibrator  # noqa: PLC0415 — local import avoids cv2 on Cloud
 
+    HandTracker, *_rest = _lazy_deps()
     cfg = load_config()
     cam_cfg = cfg.get("camera", {})
     ht_cfg = cfg.get("hand_tracking", {})
@@ -597,6 +624,8 @@ def main() -> None:
                 save_config(cfg)
                 for k in ("gvm_local_opencv_engine", "local_browser_tracker_engine", "hosted_tracker_engine"):
                     st.session_state.pop(k, None)
+                st.session_state.pop("gvm_hand_init_failed", None)
+                st.session_state.pop("gvm_camera_failed", None)
                 st.rerun()
             render_local_opencv_live(
                 cfg, image_placeholder, status_placeholder, gesture_placeholder
@@ -626,6 +655,7 @@ def main() -> None:
             cfg["cursor"] = cursor_cfg
             save_config(cfg)
             st.session_state.pop("gvm_local_opencv_engine", None)
+            st.session_state.pop("gvm_hand_init_failed", None)
             st.success("Settings saved. Tracking engine will reload on the next video frame.")
 
         st.subheader("Calibration")

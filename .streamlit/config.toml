@@ -3,5 +3,9 @@ headless = true
 enableCORS = true
 enableXsrfProtection = true
 
+# Snappier reruns after widget interaction (does not replace lazy init in code).
+[runner]
+fastReruns = true
+
 [browser]
 gatherUsageStats = false

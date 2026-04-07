@@ -3,6 +3,8 @@
     "index": 0,
     "width": 960,
     "height": 540,
+    "capture_width": 640,
+    "capture_height": 360,
     "max_search_index": 4,
     "process_width": 480,
     "process_height": 270
