@@ -261,9 +261,10 @@ def render_local_browser_camera_path(
     gesture_placeholder,
 ) -> None:
     """
-    Default local demo: browser camera + optional upload. No OpenCV VideoCapture, no threads, no st.fragment.
-    MediaPipe loads only after the user provides a frame (page shows instantly).
+    Browser st.camera_input + upload: one frame per capture (no continuous mouse session).
+    Stops the OpenCV worker so the webcam is not held by the background thread.
     """
+    stop_gvm_capture_worker()
     st.success("Loaded — use the webcam or upload a photo below (Chrome or Edge works best).")
     st.caption(
         "Allow camera when the browser asks. Press **Take photo** to refresh detection. "
@@ -647,9 +648,15 @@ def render_local_opencv_live(
     Main thread stays responsive: a background thread owns OpenCV + MediaPipe + gestures.
     The UI polls a queue inside st.fragment(run_every=...) and updates st.empty() placeholders.
     """
+    demo = bool(cfg.get("gestures", {}).get("demo_mode", True))
     st.caption(
-        "Webcam starts automatically. **Point** with your index finger to move the mouse; **pinch** thumb+index "
-        "for left click, index+middle for right click. Run locally (not Streamlit Cloud)."
+        "Live **PC webcam** (OpenCV). **Index finger** moves the cursor (inside the green zone); **thumb+index pinch** → "
+        "left click; **index+middle pinch** → right click. "
+        + (
+            "**Demo mode is on** — gestures show in the app only; toggle below for **real mouse**."
+            if demo
+            else "**Real mouse is on** — keep this window focused; move hand smoothly inside the frame."
+        )
     )
 
     if not hasattr(st, "fragment"):
@@ -778,9 +785,23 @@ def main() -> None:
                 cfg, status_placeholder, image_placeholder, gesture_placeholder
             )
         else:
+
+            def _on_local_input_mode_change() -> None:
+                st.session_state.pop("gvm_disable_worker", None)
+
             st.info(
-                "**Local demo:** hand tracking uses your **browser camera** (or upload). "
-                "Turn off demo mode in config to allow real mouse moves from gestures."
+                "**Local run:** choose **Live PC webcam** for a continuous session (hand controls your mouse when "
+                "**demo mode is off**). Use **Browser camera** only for quick snapshots without tying up the webcam driver."
+            )
+            local_mode = st.radio(
+                "Local input",
+                [
+                    "Live PC webcam (OpenCV) — continuous tracking + mouse",
+                    "Browser camera / upload — one frame at a time",
+                ],
+                index=0,
+                key="gvm_local_capture_mode",
+                on_change=_on_local_input_mode_change,
             )
             if st.button("🎬 Toggle demo mode (no real mouse)", key="gvm_demo_toggle_local"):
                 gest_cfg = cfg.get("gestures", {})
@@ -796,9 +817,14 @@ def main() -> None:
                 st.session_state.pop("gvm_camera_failed", None)
                 st.session_state.pop("gvm_live_phase", None)
                 st.rerun()
-            render_local_browser_camera_path(
-                cfg, status_placeholder, image_placeholder, gesture_placeholder
-            )
+            if local_mode.startswith("Live"):
+                render_local_opencv_live(
+                    cfg, image_placeholder, status_placeholder, gesture_placeholder
+                )
+            else:
+                render_local_browser_camera_path(
+                    cfg, status_placeholder, image_placeholder, gesture_placeholder
+                )
 
     with col_right:
         st.subheader("Control Settings")
