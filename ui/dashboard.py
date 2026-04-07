@@ -501,22 +501,30 @@ def render_local_opencv_live(
         )
         return
 
-    status_placeholder.info(
-        "**Ready.** Loading camera and hand model in the background — video appears in a few seconds on first open."
-    )
-
     cam_cfg = cfg.get("camera", {})
     proc_w = int(cam_cfg.get("process_width", 480))
     proc_h = int(cam_cfg.get("process_height", 270))
 
-    @st.fragment(run_every=0.04)
-    def _live_tick() -> None:
-        import cv2
+    _PH_PENDING = "pending"
+    _PH_CAMERA = "camera"
+    _PH_MODEL = "model"
+    _PH_RUN = "run"
 
-        if st.session_state.get("gvm_camera_failed") or st.session_state.get("gvm_hand_init_failed"):
-            return
+    if st.session_state.get("gvm_camera_failed") or st.session_state.get("gvm_hand_init_failed"):
+        return
 
+    phase = st.session_state.get("gvm_live_phase", _PH_PENDING)
+
+    # One heavy step per full script run + st.rerun() so the browser never waits on camera+model together
+    # on the first paint, and we do not rely on fragment timers for startup (which can appear “stuck”).
+    if phase == _PH_PENDING:
+        st.session_state["gvm_live_phase"] = _PH_CAMERA
+        status_placeholder.info("Starting — next step opens the camera…")
+        st.rerun()
+
+    if phase == _PH_CAMERA:
         if st.session_state.get("gvm_local_cap") is None:
+            status_placeholder.info("Opening camera…")
             cap, _err = open_local_webcam_capture(cfg)
             if cap is None:
                 st.session_state["gvm_camera_failed"] = True
@@ -525,14 +533,29 @@ def render_local_opencv_live(
                 image_placeholder.empty()
                 return
             st.session_state["gvm_local_cap"] = cap
+        st.session_state["gvm_live_phase"] = _PH_MODEL
+        st.rerun()
 
+    if phase == _PH_MODEL:
+        status_placeholder.info("Loading MediaPipe hand model (first run may download ~10MB)…")
         try:
-            tracker, engine = ensure_local_opencv_engine(cfg)
+            ensure_local_opencv_engine(cfg)
         except Exception as exc:
             st.session_state["gvm_hand_init_failed"] = True
             status_placeholder.error(f"Hand tracking failed to start: `{exc}`")
             return
+        st.session_state["gvm_live_phase"] = _PH_RUN
+        st.rerun()
 
+    # phase == run — live video via fragment
+    @st.fragment(run_every=0.05)
+    def _live_tick() -> None:
+        import cv2
+
+        if st.session_state.get("gvm_camera_failed") or st.session_state.get("gvm_hand_init_failed"):
+            return
+
+        tracker, engine = ensure_local_opencv_engine(cfg)
         cap = st.session_state.get("gvm_local_cap")
         if cap is None:
             return
@@ -626,6 +649,7 @@ def main() -> None:
                     st.session_state.pop(k, None)
                 st.session_state.pop("gvm_hand_init_failed", None)
                 st.session_state.pop("gvm_camera_failed", None)
+                st.session_state.pop("gvm_live_phase", None)
                 st.rerun()
             render_local_opencv_live(
                 cfg, image_placeholder, status_placeholder, gesture_placeholder
@@ -656,7 +680,9 @@ def main() -> None:
             save_config(cfg)
             st.session_state.pop("gvm_local_opencv_engine", None)
             st.session_state.pop("gvm_hand_init_failed", None)
-            st.success("Settings saved. Tracking engine will reload on the next video frame.")
+            st.session_state["gvm_live_phase"] = "model"
+            st.success("Settings saved. Reloading hand model…")
+            st.rerun()
 
         st.subheader("Calibration")
         if cloud_mode:
