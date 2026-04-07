@@ -367,7 +367,10 @@ def ensure_hosted_tracker_engine(cfg: dict) -> tuple[Any, Any]:
     key = "hosted_tracker_engine"
     if key not in st.session_state:
         cfg_h = copy.deepcopy(cfg)
-        cfg_h.setdefault("gestures", {})["demo_mode"] = True
+        g = cfg_h.setdefault("gestures", {})
+        g["demo_mode"] = True
+        # Skip joblib/sklearn load on Cloud — faster cold start, heuristics are enough for demo.
+        g["use_classifier"] = False
         tracker, _mouse, engine = create_engine_from_config(cfg_h, use_opencv=False)
         tracker.open(use_camera=False)
         st.session_state[key] = (tracker, engine)
@@ -432,11 +435,11 @@ def render_cloud_browser_camera_ui(
         "for real cursor control."
     )
     st.warning(
-        "**Camera needs a real browser window** (not Cursor’s embedded preview). "
-        "**Default below is “Upload image”** — no camera prompt required. "
-        "For webcam, Chrome only shows **Allow / Block** after you **click** the camera area (or if the site wasn’t blocked before)."
+        "**Use the “Upload image” tab first** if the page ever shows “taking longer than normal” — "
+        "that avoids waiting on the browser camera. **Webcam** needs a normal browser tab (not an embedded IDE preview); "
+        "click **once inside the gray camera box**, then choose **Allow** in the address bar if prompted."
     )
-    with st.expander("Why don’t I see Chrome’s “Allow camera” (step 3)? Fix it"):
+    with st.expander("Why don’t I see Chrome’s “Allow camera”? Fix it"):
         st.markdown(
             """
 **A. You must click the camera widget first**  
@@ -454,18 +457,38 @@ Embedded IDE browsers block camera. **Copy this page’s URL** and open it in **
             """
         )
 
-    input_mode = st.radio(
-        "Choose input",
-        [
-            "Upload image (no camera — recommended)",
-            "Webcam",
-        ],
-        horizontal=True,
-        index=0,
-        key="gvm_cloud_input_mode",
+    tab_upload, tab_webcam = st.tabs(
+        ["Upload image (recommended — no camera permission)", "Webcam (click box, then Allow)"]
     )
 
-    if input_mode == "Webcam":
+    ran_detection = False
+
+    with tab_upload:
+        st.caption("No camera permission required — works in locked-down browsers and IDE previews.")
+        up = st.file_uploader(
+            "Choose a JPG / PNG / WebP with a hand in frame",
+            type=["jpg", "jpeg", "png", "webp"],
+            key="gvm_upload_frame",
+        )
+        if up is not None:
+            tracker, engine = ensure_hosted_tracker_engine(cfg)
+            try:
+                frame_rgb = _bytes_to_rgb_uint8(up.getvalue())
+            except Exception:
+                status_placeholder.error("Could not read that image.")
+            else:
+                _hosted_run_detection(
+                    frame_rgb,
+                    mirror_horizontal=False,
+                    tracker=tracker,
+                    engine=engine,
+                    image_placeholder=image_placeholder,
+                    gesture_placeholder=gesture_placeholder,
+                    status_placeholder=status_placeholder,
+                )
+                ran_detection = True
+
+    with tab_webcam:
         st.markdown(
             "**Next:** click once inside the camera area below — Chrome should then show **Allow while visiting the site** "
             "or **Block** at the top of the page (or in the address bar)."
@@ -529,56 +552,29 @@ Embedded IDE browsers block camera. **Copy this page’s URL** and open it in **
             key=cam_widget_key,
             help="Browsers require a click on this widget before showing Allow/Block. If you blocked this site before, reset under the lock icon → Site settings → Camera.",
         )
-        if img_file is None:
-            status_placeholder.markdown(
-                "**Status:** waiting for camera — or select **Upload image** above (always works)."
-            )
-            return
+        if img_file is not None:
+            tracker, engine = ensure_hosted_tracker_engine(cfg)
+            try:
+                frame_rgb = _bytes_to_rgb_uint8(img_file.getvalue())
+            except Exception:
+                status_placeholder.error("Could not decode camera frame.")
+            else:
+                _hosted_run_detection(
+                    frame_rgb,
+                    mirror_horizontal=True,
+                    tracker=tracker,
+                    engine=engine,
+                    image_placeholder=image_placeholder,
+                    gesture_placeholder=gesture_placeholder,
+                    status_placeholder=status_placeholder,
+                )
+                ran_detection = True
 
-        tracker, engine = ensure_hosted_tracker_engine(cfg)
-        try:
-            frame_rgb = _bytes_to_rgb_uint8(img_file.getvalue())
-        except Exception:
-            status_placeholder.error("Could not decode camera frame.")
-            return
-
-        _hosted_run_detection(
-            frame_rgb,
-            mirror_horizontal=True,
-            tracker=tracker,
-            engine=engine,
-            image_placeholder=image_placeholder,
-            gesture_placeholder=gesture_placeholder,
-            status_placeholder=status_placeholder,
+    if not ran_detection:
+        status_placeholder.markdown(
+            "**Status:** Open **Upload image** (first tab) and pick a photo — fastest on Streamlit Cloud. "
+            "Or use **Webcam**: click inside the gray camera box, then **Allow** when the browser asks."
         )
-        return
-
-    st.caption("No camera permission required — works in Cursor’s preview and locked-down browsers.")
-    up = st.file_uploader(
-        "Choose a JPG / PNG / WebP with a hand in frame",
-        type=["jpg", "jpeg", "png", "webp"],
-        key="gvm_upload_frame",
-    )
-    if up is None:
-        status_placeholder.markdown("**Status:** upload an image to run hand detection.")
-        return
-
-    tracker, engine = ensure_hosted_tracker_engine(cfg)
-    try:
-        frame_rgb = _bytes_to_rgb_uint8(up.getvalue())
-    except Exception:
-        status_placeholder.error("Could not read that image.")
-        return
-
-    _hosted_run_detection(
-        frame_rgb,
-        mirror_horizontal=False,
-        tracker=tracker,
-        engine=engine,
-        image_placeholder=image_placeholder,
-        gesture_placeholder=gesture_placeholder,
-        status_placeholder=status_placeholder,
-    )
 
 
 def create_engine_from_config(
