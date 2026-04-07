@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
+import queue
 import sys
+import time
 from io import BytesIO
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from typing import Any, Optional, Tuple
+
+logger = logging.getLogger("gvm.dashboard")
 
 # Repo root on path so mediapipe_vision_stub can be imported when running `streamlit run ui/dashboard.py`
 _ROOT = Path(__file__).resolve().parents[1]
@@ -100,6 +105,7 @@ def open_local_webcam_capture(cfg: dict) -> Tuple[Optional[object], str]:
 
 
 def release_local_webcam_cap() -> None:
+    stop_gvm_capture_worker()
     cap = st.session_state.pop("gvm_local_cap", None)
     if cap is not None:
         try:
@@ -108,19 +114,144 @@ def release_local_webcam_cap() -> None:
             pass
 
 
-def ensure_local_opencv_engine(cfg: dict) -> tuple[Any, Any]:
+def _frame_queue_put(q: "queue.Queue", item: dict) -> None:
+    """Keep only the newest frame(s): drop backlog if the UI is slow."""
+    try:
+        q.put_nowait(item)
+    except queue.Full:
+        try:
+            while True:
+                q.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            q.put_nowait(item)
+        except queue.Full:
+            pass
+
+
+def stop_gvm_capture_worker() -> None:
+    """Signal background capture thread to stop and release resources."""
+    ev = st.session_state.get("gvm_worker_stop")
+    if ev is not None:
+        ev.set()
+    th = st.session_state.get("gvm_worker_thread")
+    if th is not None and th.is_alive():
+        th.join(timeout=3.0)
+    for key in ("gvm_worker_thread", "gvm_worker_stop", "gvm_frame_queue"):
+        st.session_state.pop(key, None)
+
+
+def _gesture_capture_worker(cfg: dict, stop_event: Event, frame_queue: "queue.Queue") -> None:
     """
-    MediaPipe + rule-based finger control (landmark 8 move, pinches for clicks).
-    Classifier off so gestures are deterministic from MediaPipe Hands.
+    Background thread: OpenCV capture + MediaPipe + gesture/mouse.
+    Never touches Streamlit — only pushes dicts to frame_queue.
     """
-    key = "gvm_local_opencv_engine"
-    if key not in st.session_state:
+    import cv2
+
+    cap = None
+    tracker = None
+    try:
+        _frame_queue_put(frame_queue, {"kind": "status", "msg": "Worker: opening camera…"})
+        logger.info("Worker: opening camera")
+        cap, err_msg = open_local_webcam_capture(cfg)
+        if cap is None or not cap.isOpened():
+            logger.warning("Worker: camera failed: %s", err_msg)
+            _frame_queue_put(frame_queue, {"kind": "error", "msg": CAMERA_ERROR})
+            return
+
+        _frame_queue_put(frame_queue, {"kind": "status", "msg": "Worker: loading hand model…"})
+        logger.info("Worker: loading MediaPipe / hand model")
         cfg_h = copy.deepcopy(cfg)
         cfg_h.setdefault("gestures", {})["use_classifier"] = False
-        t, _m, engine = create_engine_from_config(cfg_h, use_opencv=True)
-        t.open(use_camera=False)
-        st.session_state[key] = (t, engine)
-    return st.session_state[key]
+        tracker, _mouse, engine = create_engine_from_config(cfg_h, use_opencv=True)
+        tracker.open(use_camera=False)
+
+        cam_cfg = cfg.get("camera", {})
+        proc_w = int(cam_cfg.get("process_width", 480))
+        proc_h = int(cam_cfg.get("process_height", 270))
+
+        logger.info("Worker: camera started, entering frame loop")
+        _frame_queue_put(frame_queue, {"kind": "status", "msg": "Worker: streaming…"})
+
+        while not stop_event.is_set():
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                logger.debug("Worker: skipped frame read")
+                time.sleep(0.02)
+                continue
+
+            frame = cv2.flip(frame, 1)
+            if proc_w > 0 and proc_h > 0:
+                frame = cv2.resize(frame, (proc_w, proc_h), interpolation=cv2.INTER_AREA)
+
+            try:
+                frame_out, hands = tracker.process(frame)
+            except Exception as exc:
+                logger.exception("Worker: MediaPipe error (skipped frame): %s", exc)
+                time.sleep(0.02)
+                continue
+
+            try:
+                command = engine.process(hands)
+            except Exception as exc:
+                logger.exception("Worker: gesture engine error (skipped frame): %s", exc)
+                time.sleep(0.02)
+                continue
+
+            frame_rgb = cv2.cvtColor(frame_out, cv2.COLOR_BGR2RGB)
+            gtxt = str(command.value) if command else ""
+            _frame_queue_put(
+                frame_queue,
+                {
+                    "kind": "ok",
+                    "rgb": frame_rgb,
+                    "hands": len(hands),
+                    "gesture": gtxt,
+                    "fps": float(tracker.fps),
+                },
+            )
+            time.sleep(0.001)
+
+    except Exception as exc:
+        logger.exception("Worker crashed: %s", exc)
+        _frame_queue_put(frame_queue, {"kind": "error", "msg": f"Worker error: `{exc}`"})
+    finally:
+        try:
+            if cap is not None:
+                cap.release()
+        except Exception:
+            pass
+        try:
+            if tracker is not None:
+                tracker.close()
+        except Exception:
+            pass
+        logger.info("Worker: stopped")
+
+
+def ensure_gvm_capture_worker(cfg: dict) -> None:
+    """Start background worker once; survives Streamlit reruns while alive."""
+    if st.session_state.get("gvm_disable_worker"):
+        return
+    th = st.session_state.get("gvm_worker_thread")
+    if th is not None and th.is_alive():
+        return
+    stop_gvm_capture_worker()
+    q: queue.Queue = queue.Queue(maxsize=2)
+    ev = Event()
+    st.session_state["gvm_frame_queue"] = q
+    st.session_state["gvm_worker_stop"] = ev
+    worker_cfg = copy.deepcopy(cfg)
+    th = Thread(
+        target=_gesture_capture_worker,
+        args=(worker_cfg, ev, q),
+        daemon=True,
+        name="GVM-CaptureWorker",
+    )
+    st.session_state["gvm_worker_thread"] = th
+    th.start()
+    logger.info("Main: capture worker thread started")
 
 
 def render_local_browser_camera_path(
@@ -487,8 +618,8 @@ def render_local_opencv_live(
     gesture_placeholder,
 ) -> None:
     """
-    Auto-starts webcam, mirrors horizontally, downscales frames for speed, runs MediaPipe each tick.
-    Camera + MediaPipe init run inside the fragment so the page shell renders immediately.
+    Main thread stays responsive: a background thread owns OpenCV + MediaPipe + gestures.
+    The UI polls a queue inside st.fragment(run_every=...) and updates st.empty() placeholders.
     """
     st.caption(
         "Webcam starts automatically. **Point** with your index finger to move the mouse; **pinch** thumb+index "
@@ -501,86 +632,64 @@ def render_local_opencv_live(
         )
         return
 
-    cam_cfg = cfg.get("camera", {})
-    proc_w = int(cam_cfg.get("process_width", 480))
-    proc_h = int(cam_cfg.get("process_height", 270))
-
-    _PH_PENDING = "pending"
-    _PH_CAMERA = "camera"
-    _PH_MODEL = "model"
-    _PH_RUN = "run"
-
-    if st.session_state.get("gvm_camera_failed") or st.session_state.get("gvm_hand_init_failed"):
+    if st.session_state.get("gvm_disable_worker"):
+        status_placeholder.warning(
+            f"{CAMERA_ERROR} or worker stopped. Use **Toggle demo mode** (or **Save settings**) to retry."
+        )
         return
 
-    phase = st.session_state.get("gvm_live_phase", _PH_PENDING)
+    ensure_gvm_capture_worker(cfg)
 
-    # One heavy step per full script run + st.rerun() so the browser never waits on camera+model together
-    # on the first paint, and we do not rely on fragment timers for startup (which can appear “stuck”).
-    if phase == _PH_PENDING:
-        st.session_state["gvm_live_phase"] = _PH_CAMERA
-        status_placeholder.info("Starting — next step opens the camera…")
-        st.rerun()
-
-    if phase == _PH_CAMERA:
-        if st.session_state.get("gvm_local_cap") is None:
-            status_placeholder.info("Opening camera…")
-            cap, _err = open_local_webcam_capture(cfg)
-            if cap is None:
-                st.session_state["gvm_camera_failed"] = True
-                status_placeholder.error(CAMERA_ERROR)
-                gesture_placeholder.empty()
-                image_placeholder.empty()
-                return
-            st.session_state["gvm_local_cap"] = cap
-        st.session_state["gvm_live_phase"] = _PH_MODEL
-        st.rerun()
-
-    if phase == _PH_MODEL:
-        status_placeholder.info("Loading MediaPipe hand model (first run may download ~10MB)…")
-        try:
-            ensure_local_opencv_engine(cfg)
-        except Exception as exc:
-            st.session_state["gvm_hand_init_failed"] = True
-            status_placeholder.error(f"Hand tracking failed to start: `{exc}`")
-            return
-        st.session_state["gvm_live_phase"] = _PH_RUN
-        st.rerun()
-
-    # phase == run — live video via fragment
     @st.fragment(run_every=0.05)
-    def _live_tick() -> None:
-        import cv2
-
-        if st.session_state.get("gvm_camera_failed") or st.session_state.get("gvm_hand_init_failed"):
+    def _poll_worker_queue() -> None:
+        fq = st.session_state.get("gvm_frame_queue")
+        if fq is None:
             return
 
-        tracker, engine = ensure_local_opencv_engine(cfg)
-        cap = st.session_state.get("gvm_local_cap")
-        if cap is None:
-            return
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            status_placeholder.error(CAMERA_ERROR)
-            return
-        frame = cv2.flip(frame, 1)
-        if proc_w > 0 and proc_h > 0:
-            frame = cv2.resize(frame, (proc_w, proc_h), interpolation=cv2.INTER_AREA)
-        try:
-            frame_out, hands = tracker.process(frame)
-        except Exception as exc:
-            status_placeholder.error(f"Hand tracking failed: `{exc}`")
-            return
-        command = engine.process(hands)
-        if command:
-            gesture_placeholder.markdown(f"**Gesture:** `{command.value}`")
-        frame_rgb = cv2.cvtColor(frame_out, cv2.COLOR_BGR2RGB)
-        image_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
-        status_placeholder.markdown(
-            f"**FPS (processing):** `{tracker.fps:.1f}` · **Hands:** `{len(hands)}` · **Index tip → cursor**"
-        )
+        last_ok: dict | None = None
+        last_status: str | None = None
+        err_msg: str | None = None
 
-    _live_tick()
+        while True:
+            try:
+                item = fq.get_nowait()
+            except queue.Empty:
+                break
+            kind = item.get("kind")
+            if kind == "error":
+                err_msg = item.get("msg", CAMERA_ERROR)
+            elif kind == "status":
+                last_status = item.get("msg", "")
+            elif kind == "ok":
+                last_ok = item
+                err_msg = None
+
+        if err_msg:
+            st.session_state["gvm_disable_worker"] = True
+            stop_gvm_capture_worker()
+            status_placeholder.error(err_msg)
+            logger.warning("UI: worker error, capture disabled until you retry: %s", err_msg)
+            return
+
+        if last_ok is not None:
+            image_placeholder.image(
+                last_ok["rgb"],
+                channels="RGB",
+                use_container_width=True,
+            )
+            if last_ok.get("gesture"):
+                gesture_placeholder.markdown(f"**Gesture:** `{last_ok['gesture']}`")
+            status_placeholder.markdown(
+                f"**FPS:** `{last_ok['fps']:.1f}` · **Hands:** `{last_ok['hands']}` · **worker thread**"
+            )
+        elif last_status:
+            status_placeholder.info(last_status)
+        else:
+            th = st.session_state.get("gvm_worker_thread")
+            if th is not None and th.is_alive():
+                status_placeholder.info("Waiting for camera / model (background thread)…")
+
+    _poll_worker_queue()
 
 
 def run_calibration(status_placeholder) -> None:
@@ -617,6 +726,7 @@ def main() -> None:
         layout="wide",
         page_icon="🖱️",
     )
+    st.write("App started")
 
     st.title("AI Gesture Virtual Mouse")
     st.caption("Production-style gesture-controlled virtual mouse with MediaPipe, OpenCV, and Streamlit.")
@@ -645,6 +755,8 @@ def main() -> None:
                 gest_cfg["demo_mode"] = not gest_cfg.get("demo_mode", False)
                 cfg["gestures"] = gest_cfg
                 save_config(cfg)
+                stop_gvm_capture_worker()
+                st.session_state.pop("gvm_disable_worker", None)
                 for k in ("gvm_local_opencv_engine", "local_browser_tracker_engine", "hosted_tracker_engine"):
                     st.session_state.pop(k, None)
                 st.session_state.pop("gvm_hand_init_failed", None)
@@ -678,10 +790,12 @@ def main() -> None:
             cursor_cfg["smoothing_factor"] = smoothing
             cfg["cursor"] = cursor_cfg
             save_config(cfg)
+            stop_gvm_capture_worker()
+            st.session_state.pop("gvm_disable_worker", None)
             st.session_state.pop("gvm_local_opencv_engine", None)
             st.session_state.pop("gvm_hand_init_failed", None)
-            st.session_state["gvm_live_phase"] = "model"
-            st.success("Settings saved. Reloading hand model…")
+            st.session_state.pop("gvm_live_phase", None)
+            st.success("Settings saved. Restarting capture worker…")
             st.rerun()
 
         st.subheader("Calibration")
@@ -693,9 +807,12 @@ def main() -> None:
         if st.button("Run calibration"):
             if cloud_mode:
                 st.error("Calibration is not available in Streamlit Cloud mode.")
-            elif st.session_state.get("gvm_local_cap") is not None:
+            elif (
+                (wt := st.session_state.get("gvm_worker_thread")) is not None
+                and getattr(wt, "is_alive", lambda: False)()
+            ):
                 st.warning(
-                    "Close this Streamlit tab (or stop the server) so the webcam is free, then run calibration."
+                    "Stop the live feed: toggle demo or save settings to restart the worker, then run calibration."
                 )
             else:
                 Thread(target=run_calibration, args=(calib_status,), daemon=True).start()
