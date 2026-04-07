@@ -2,7 +2,6 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-import joblib
 import numpy as np
 
 
@@ -34,6 +33,8 @@ class GestureClassifier:
 
         if self.use_model and self.model_path.exists():
             try:
+                import joblib
+
                 self._model = joblib.load(self.model_path)
                 logger.info("Loaded gesture classifier from %s", self.model_path)
             except Exception as exc:

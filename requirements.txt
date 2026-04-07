@@ -1,7 +1,6 @@
-opencv-python-headless
+# Streamlit Cloud: keep this minimal so "Your app is in the oven" finishes quickly.
+# Local desktop (webcam, calibration, real mouse): also run `pip install -r requirements-local.txt`
+streamlit>=1.33.0
 mediapipe
 numpy
 Pillow
-streamlit>=1.33.0
-scikit-learn
-pyautogui>=0.9.54

@@ -1,0 +1,4 @@
+-r requirements.txt
+opencv-python-headless
+scikit-learn
+pyautogui>=0.9.54
