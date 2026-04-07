@@ -23,5 +23,11 @@ _spec = importlib.util.spec_from_file_location(
 )
 _mod = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None
-_spec.loader.exec_module(_mod)
-_mod.main()
+try:
+    _spec.loader.exec_module(_mod)
+    _mod.main()
+except Exception:
+    import traceback
+
+    traceback.print_exc()
+    raise

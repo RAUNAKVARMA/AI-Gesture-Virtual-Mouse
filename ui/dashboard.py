@@ -137,7 +137,7 @@ def stop_gvm_capture_worker() -> None:
         ev.set()
     th = st.session_state.get("gvm_worker_thread")
     if th is not None and th.is_alive():
-        th.join(timeout=3.0)
+        th.join(timeout=0.25)
     for key in ("gvm_worker_thread", "gvm_worker_stop", "gvm_frame_queue"):
         st.session_state.pop(key, None)
 
@@ -633,6 +633,7 @@ def render_local_opencv_live(
         return
 
     if st.session_state.get("gvm_disable_worker"):
+        stop_gvm_capture_worker()
         status_placeholder.warning(
             f"{CAMERA_ERROR} or worker stopped. Use **Toggle demo mode** (or **Save settings**) to retry."
         )
@@ -665,10 +666,10 @@ def render_local_opencv_live(
                 err_msg = None
 
         if err_msg:
+            # Do not join/stop threads from inside a fragment (can deadlock Streamlit). Flag only; main cleans up.
             st.session_state["gvm_disable_worker"] = True
-            stop_gvm_capture_worker()
             status_placeholder.error(err_msg)
-            logger.warning("UI: worker error, capture disabled until you retry: %s", err_msg)
+            logger.warning("UI: worker error (will stop on next run): %s", err_msg)
             return
 
         if last_ok is not None:
@@ -726,16 +727,26 @@ def main() -> None:
         layout="wide",
         page_icon="🖱️",
     )
-    st.write("App started")
 
     st.title("AI Gesture Virtual Mouse")
     st.caption("Production-style gesture-controlled virtual mouse with MediaPipe, OpenCV, and Streamlit.")
+    logger.info("App started (main)")
 
-    cfg = load_config()
-
-    col_left, col_right = st.columns([2, 1])
+    try:
+        cfg = load_config()
+    except Exception as exc:
+        st.error(f"Could not load config: `{exc}`")
+        return
 
     cloud_mode = use_streamlit_cloud_mode(cfg)
+
+    # Local only: one fast paint (title + message) before columns/worker so the tab exits “Please wait…” quickly.
+    if not cloud_mode and not st.session_state.get("_gvm_ui_boot_ok"):
+        st.session_state["_gvm_ui_boot_ok"] = True
+        st.info("Loading interface…")
+        st.rerun()
+
+    col_left, col_right = st.columns([2, 1])
 
     with col_left:
         image_placeholder = st.empty()
@@ -757,6 +768,7 @@ def main() -> None:
                 save_config(cfg)
                 stop_gvm_capture_worker()
                 st.session_state.pop("gvm_disable_worker", None)
+                st.session_state.pop("_gvm_ui_boot_ok", None)
                 for k in ("gvm_local_opencv_engine", "local_browser_tracker_engine", "hosted_tracker_engine"):
                     st.session_state.pop(k, None)
                 st.session_state.pop("gvm_hand_init_failed", None)
