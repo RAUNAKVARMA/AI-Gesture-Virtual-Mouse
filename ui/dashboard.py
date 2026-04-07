@@ -260,28 +260,58 @@ def render_local_browser_camera_path(
     image_placeholder,
     gesture_placeholder,
 ) -> None:
-    """Browser webcam via st.camera_input — triggers OS/browser permission prompts."""
+    """
+    Default local demo: browser camera + optional upload. No OpenCV VideoCapture, no threads, no st.fragment.
+    MediaPipe loads only after the user provides a frame (page shows instantly).
+    """
+    st.success("Loaded — use the webcam or upload a photo below (Chrome or Edge works best).")
     st.caption(
-        "Click the camera area once so the browser can ask for **camera** access. "
-        "Use **Chrome** or **Edge** for best results. Each capture refreshes detection."
+        "Allow camera when the browser asks. Press **Take photo** to refresh detection. "
+        "Upload works if the camera is blocked."
     )
-    tracker, engine = ensure_local_browser_tracker_engine(cfg)
     img_file = st.camera_input(
-        "Webcam (browser)",
+        "Webcam",
         key="gvm_local_browser_cam",
-        help="Allow camera when prompted. If blocked, reset site permissions in the address bar.",
+        help="Click the camera area so the browser can request access.",
     )
-    if img_file is None:
-        status_placeholder.info("**Status:** waiting for a camera capture — click **Take photo** when ready.")
+    up = st.file_uploader(
+        "Upload a hand photo (optional)",
+        type=["jpg", "jpeg", "png", "webp"],
+        key="gvm_local_upload_demo",
+    )
+
+    raw: Optional[bytes] = None
+    mirror = True
+    if up is not None:
+        try:
+            raw = up.getvalue()
+            mirror = False
+        except Exception:
+            status_placeholder.error("Could not read the uploaded file.")
+            return
+    elif img_file is not None:
+        try:
+            raw = img_file.getvalue()
+            mirror = True
+        except Exception:
+            status_placeholder.error(CAMERA_FALLBACK_MESSAGE)
+            return
+    else:
+        status_placeholder.info(
+            "**Ready for demo:** take a webcam photo or upload an image to see hand tracking."
+        )
         return
+
     try:
-        frame_rgb = _bytes_to_rgb_uint8(img_file.getvalue())
-    except Exception:
-        status_placeholder.error(CAMERA_FALLBACK_MESSAGE)
+        tracker, engine = ensure_local_browser_tracker_engine(cfg)
+        frame_rgb = _bytes_to_rgb_uint8(raw)
+    except Exception as exc:
+        status_placeholder.error(f"Hand tracking failed: `{exc}`")
         return
+
     _hosted_run_detection(
         frame_rgb,
-        mirror_horizontal=True,
+        mirror_horizontal=mirror,
         tracker=tracker,
         engine=engine,
         image_placeholder=image_placeholder,
@@ -740,12 +770,6 @@ def main() -> None:
 
     cloud_mode = use_streamlit_cloud_mode(cfg)
 
-    # Local only: one fast paint (title + message) before columns/worker so the tab exits “Please wait…” quickly.
-    if not cloud_mode and not st.session_state.get("_gvm_ui_boot_ok"):
-        st.session_state["_gvm_ui_boot_ok"] = True
-        st.info("Loading interface…")
-        st.rerun()
-
     col_left, col_right = st.columns([2, 1])
 
     with col_left:
@@ -759,7 +783,8 @@ def main() -> None:
             )
         else:
             st.info(
-                "Running on **your PC**: the camera opens automatically and **pyautogui** drives the system cursor."
+                "**Local demo:** hand tracking uses your **browser camera** (or upload). "
+                "Turn off demo mode in config to allow real mouse moves from gestures."
             )
             if st.button("🎬 Toggle demo mode (no real mouse)", key="gvm_demo_toggle_local"):
                 gest_cfg = cfg.get("gestures", {})
@@ -775,8 +800,8 @@ def main() -> None:
                 st.session_state.pop("gvm_camera_failed", None)
                 st.session_state.pop("gvm_live_phase", None)
                 st.rerun()
-            render_local_opencv_live(
-                cfg, image_placeholder, status_placeholder, gesture_placeholder
+            render_local_browser_camera_path(
+                cfg, status_placeholder, image_placeholder, gesture_placeholder
             )
 
     with col_right:
@@ -807,7 +832,7 @@ def main() -> None:
             st.session_state.pop("gvm_local_opencv_engine", None)
             st.session_state.pop("gvm_hand_init_failed", None)
             st.session_state.pop("gvm_live_phase", None)
-            st.success("Settings saved. Restarting capture worker…")
+            st.success("Settings saved.")
             st.rerun()
 
         st.subheader("Calibration")
