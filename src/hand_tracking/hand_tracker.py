@@ -1,4 +1,5 @@
 import logging
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,6 +86,17 @@ class HandTracker:
         default_model = root / "assets" / "hand_landmarker.task"
         self.model_path = Path(model_path) if model_path is not None else default_model
 
+    def _video_capture(self, index: int):
+        """OpenCV capture with a Windows-friendly backend when available."""
+        cv2 = self._cv2()
+        if sys.platform == "win32":
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+            if cap is not None and cap.isOpened():
+                return cap
+            if cap is not None:
+                cap.release()
+        return cv2.VideoCapture(index)
+
     def _cv2(self):
         import cv2
 
@@ -128,7 +140,7 @@ class HandTracker:
 
         logger.info("Auto-detecting camera index up to %d", self.max_search_index)
         for idx in range(self.max_search_index):
-            cap = cv2.VideoCapture(idx)
+            cap = self._video_capture(idx)
             if cap is not None and cap.isOpened():
                 ret, _ = cap.read()
                 cap.release()
@@ -150,7 +162,7 @@ class HandTracker:
                 raise RuntimeError("Local camera requires use_opencv=True (install opencv-python).")
             cv2 = self._cv2()
             index = self._detect_camera_index()
-            self.cap = cv2.VideoCapture(index)
+            self.cap = self._video_capture(index)
             if not self.cap or not self.cap.isOpened():
                 raise RuntimeError(f"Failed to open camera at index {index}")
 
