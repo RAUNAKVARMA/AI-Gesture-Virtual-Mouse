@@ -1,5 +1,6 @@
 [server]
-headless = true
+# false = Streamlit opens your default browser locally. Cloud still runs without a GUI.
+headless = false
 enableCORS = true
 enableXsrfProtection = true
 
